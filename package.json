@@ -1,0 +1,34 @@
+{
+  "name": "pi-worrie",
+  "version": "1.0.0",
+  "description": "Worrie's Personal Pi extensions",
+  "type": "module",
+  "license": "MIT",
+  "author": "worrie",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/worriee/pi-worrie.git"
+  },
+  "homepage": "https://github.com/worriee/pi-worrie#readme",
+  "bugs": {
+    "url": "https://github.com/worriee/pi-worrie/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "pi-rewind",
+    "pi-updater",
+    "pi-worrie"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/rewind.ts",
+      "./extensions/updater.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.74.0 <1",
+    "@earendil-works/pi-tui": ">=0.74.0 <1"
+  }
+}
