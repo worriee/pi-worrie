@@ -1,6 +1,7 @@
 /**
- * pi-rewind — Undo/Redo for Pi using Git snapshots
+ * rewind extension
  * c: worrie
+ *
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
