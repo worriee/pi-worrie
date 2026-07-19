@@ -1,4 +1,3 @@
 node_modules/
-.opencode/
-opencode.json
+.pi/
 AGENTS.md
