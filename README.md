@@ -8,7 +8,7 @@ A collection of my own pi extensions.
 
 ## Extensions
 
-### **updater**
+### Updater
 
 > updates pi extensions and pi itself
 
@@ -20,7 +20,7 @@ Runs `pi update --all` directly without the need of using terminal.
 
 ---
 
-### **rewind**
+### Rewind
 
 > Undo/Redo for Pi using Git snapshots
 
