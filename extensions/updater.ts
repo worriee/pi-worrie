@@ -4,6 +4,7 @@
  *
  * Registers /updater command that runs `pi update --all`.
  */
+import { exec } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
@@ -13,11 +14,21 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify("Checking for updates...", "info");
 
       try {
-        const result = await pi.exec("pi", ["update", "--all"], {
-          timeout: 120_000,
+        const { stdout, stderr } = await new Promise<{
+          stdout: string;
+          stderr: string;
+        }>((resolve, reject) => {
+          exec(
+            "pi update --all",
+            { timeout: 120_000 },
+            (err, stdout, stderr) => {
+              if (err) reject(err);
+              else resolve({ stdout, stderr });
+            },
+          );
         });
 
-        const out = (result.stdout + result.stderr).toLowerCase();
+        const out = (stdout + stderr).toLowerCase();
 
         if (
           out.includes("up to date") ||
@@ -25,14 +36,12 @@ export default function (pi: ExtensionAPI) {
           out.includes("already up-to-date")
         ) {
           ctx.ui.notify("Everything is up-to-date.", "info");
-        } else if (result.code === 0) {
-          ctx.ui.notify("Updates applied successfully.", "info");
         } else {
-          ctx.ui.notify("Update finished with warnings.", "warn");
+          ctx.ui.notify("Updates applied successfully.", "info");
         }
-      } catch (err) {
+      } catch (err: any) {
         ctx.ui.notify(
-          `Update failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Update failed: ${err.message ?? String(err)}`,
           "error",
         );
       }
