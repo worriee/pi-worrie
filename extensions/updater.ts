@@ -1,5 +1,5 @@
 /**
- * pi-updater — /updater extension
+ * updater extension
  * c: worrie
  *
  * Registers /updater command that runs `pi update --all`.
