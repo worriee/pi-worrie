@@ -38,29 +38,6 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
-  /** Create an auto-snapshot commit */
-  async function createSnapshot(): Promise<string | null> {
-    try {
-      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const msg = "pi-rewind: snap-" + ts;
-
-      await pi.exec("git", ["add", "-A"], { timeout: 10000 });
-      const result = await pi.exec("git", ["commit", "-m", msg], {
-        timeout: 10000,
-      });
-
-      if (result.code !== 0) return null;
-
-      // Get the commit hash
-      const hashResult = await pi.exec("git", ["rev-parse", "HEAD"], {
-        timeout: 5000,
-      });
-      return hashResult.stdout.trim();
-    } catch {
-      return null;
-    }
-  }
-
   /** Get the list of snapshot commits from git log */
   async function getSnapshotCommits(): Promise<string[]> {
     try {
@@ -91,28 +68,6 @@ export default function (pi: ExtensionAPI) {
   }
 
   // ===================================================================
-  // SNAPSHOT MANAGEMENT
-  // ===================================================================
-
-  /**
-   * Called after each agent turn to auto-snapshot if there are changes.
-   * Stores the commit hash in session memory for undo tracking.
-   */
-  async function autoSnapshot(): Promise<void> {
-    if (!(await isGitRepo())) return;
-    if (!(await hasChanges())) return;
-
-    const hash = await createSnapshot();
-    if (hash) {
-      pi.appendEntry("rewind-snapshots", {
-        hash: hash,
-        timestamp: Date.now(),
-        type: "snapshot",
-      });
-    }
-  }
-
-  // ===================================================================
   // SHARED UNDO/REDO CORE LOGIC
   // ===================================================================
 
@@ -121,7 +76,10 @@ export default function (pi: ExtensionAPI) {
    * Returns the target hash if successful, null if nothing to undo.
    * This can be called from both commands and shortcuts.
    */
-  async function performUndoCore(): Promise<{ targetHash: string } | null> {
+  async function performUndoCore(): Promise<{
+    targetHash: string;
+    stashed: boolean;
+  } | null> {
     if (!(await isGitRepo())) return null;
 
     const snapshots = await getSnapshotCommits();
@@ -129,9 +87,15 @@ export default function (pi: ExtensionAPI) {
 
     const targetHash = snapshots[0];
 
-    // Commit any uncommitted changes first
+    // Stash uncommitted changes so they aren't lost during revert
+    let stashed = false;
     if (await hasChanges()) {
-      await createSnapshot();
+      await pi.exec(
+        "git",
+        ["stash", "--include-untracked", "-m", "pi-rewind: pre-undo stash"],
+        { timeout: 10000 },
+      );
+      stashed = true;
     }
 
     // Revert the snapshot commit
@@ -144,12 +108,20 @@ export default function (pi: ExtensionAPI) {
     if (revertResult.code !== 0) {
       if (revertResult.stderr.includes("CONFLICT")) {
         await pi.exec("git", ["revert", "--abort"], { timeout: 10000 });
+        // Restore stash on failure
+        if (stashed) {
+          await pi.exec("git", ["stash", "pop"], { timeout: 10000 });
+        }
         return null;
+      }
+      // Restore stash on other failures
+      if (stashed) {
+        await pi.exec("git", ["stash", "pop"], { timeout: 10000 });
       }
       return null;
     }
 
-    return { targetHash };
+    return { targetHash, stashed };
   }
 
   /**
@@ -212,6 +184,13 @@ export default function (pi: ExtensionAPI) {
       // Fork the session to before the last user message
       const entries = ctx.sessionManager.getEntries();
       const lastUserEntryId = findLastUserEntryId(entries);
+
+      if (result.stashed) {
+        ctx.ui.notify(
+          "Uncommitted changes stashed during undo. Use 'git stash pop' to restore them.",
+          "info",
+        );
+      }
 
       if (lastUserEntryId) {
         ctx.ui.notify("Changes reverted. Forking session...", "info");
@@ -322,23 +301,10 @@ export default function (pi: ExtensionAPI) {
   // EVENT HOOKS
   // ===================================================================
 
-  // Auto-snapshot after each agent turn ends
-  pi.on("turn_end", async () => {
-    await autoSnapshot();
-  });
-
   // Remember the old session file on fork so /redo can switch back
   pi.on("session_start", async (event) => {
     if (event.reason === "fork" && event.previousSessionFile) {
       previousSessionFile = event.previousSessionFile;
-    }
-
-    // Take a snapshot on session start to establish a baseline
-    if (await isGitRepo()) {
-      // Don't snapshot if the repo is clean (first start)
-      if (await hasChanges()) {
-        await createSnapshot();
-      }
     }
   });
 }
