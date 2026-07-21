@@ -43,11 +43,21 @@ export default function (pi: ExtensionAPI) {
     try {
       const result = await pi.exec(
         "git",
-        ["log", "--oneline", "--grep=pi-rewind: snap-", "--format=%H", "-10"],
+        ["log", "--oneline", "--grep=pi-rewind: snap-", "--format=%H%n%s", "-10"],
         { timeout: 5000 },
       );
       if (result.code !== 0 || !result.stdout.trim()) return [];
-      return result.stdout.trim().split("\n").filter(Boolean);
+      const lines = result.stdout.trim().split("\n").filter(Boolean);
+      // Filter out revert commits — they match the grep but should not be undo targets
+      const commits: string[] = [];
+      for (let i = 0; i < lines.length; i += 2) {
+        const hash = lines[i];
+        const subject = lines[i + 1];
+        if (subject && !subject.startsWith("Revert")) {
+          commits.push(hash);
+        }
+      }
+      return commits;
     } catch {
       return [];
     }

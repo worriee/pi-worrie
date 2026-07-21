@@ -1,4 +1,4 @@
 node_modules/
 .pi/
-opencode.json
 AGENTS.md
+.pi-subagents/artifacts/
