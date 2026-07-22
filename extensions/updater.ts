@@ -38,9 +38,9 @@ export default function (pi: ExtensionAPI) {
         } else {
           ctx.ui.notify("Everything is up to date.", "info");
         }
-      } catch (err) {
+      } catch (err: any) {
         ctx.ui.notify(
-          `Update failed: ${err instanceof Error ? err.message : String(err)}`,
+          `Update failed: ${err.message ?? String(err)}`,
           "error",
         );
       }
