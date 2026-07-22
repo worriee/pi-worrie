@@ -23,7 +23,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/rewind.ts",
+      "./extensions/pi-rewind/rewind.ts",
       "./extensions/updater.ts"
     ]
   },
