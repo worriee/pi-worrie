@@ -30,16 +30,17 @@ const MAX_STACK = 10;
 interface StackEntry {
   id: string;
   timestamp: number;
+  /** Session file to switch back to on redo. Set by session_start after undo fork. */
+  sessionFile?: string;
 }
 
 interface RewindState {
   undo: StackEntry[];
   redo: StackEntry[];
-  lastSessionFile: string | null;
 }
 
 function defaultState(): RewindState {
-  return { undo: [], redo: [], lastSessionFile: null };
+  return { undo: [], redo: [] };
 }
 
 function readState(): RewindState {
@@ -97,13 +98,19 @@ function getAllFiles(
   return results;
 }
 
-/** Save current workspace files into a snapshot dir as files.json. */
-function snapshotFiles(files: string[], destDir: string): void {
+/** Save current workspace files into a snapshot dir as files.json.
+ *  If sinceTimestamp is provided, skip files whose mtime is older or equal.
+ *  First snapshot (no sinceTimestamp) saves everything — full backup. */
+function snapshotFiles(files: string[], destDir: string, sinceTimestamp?: number): void {
   mkdirSync(destDir, { recursive: true });
   const map: Record<string, string> = {};
   for (const f of files) {
     try {
-      map[f] = readFileSync(join(ROOT, f), "utf-8");
+      const full = join(ROOT, f);
+      const s = statSync(full);
+      // Skip files not modified since the last snapshot
+      if (sinceTimestamp !== undefined && s.mtimeMs <= sinceTimestamp) continue;
+      map[f] = readFileSync(full, "utf-8");
     } catch {
       // skip unreadable
     }
@@ -137,7 +144,10 @@ function pushStack(stackKey: "undo" | "redo", id: string): void {
   // Snapshot current workspace
   const files = getAllFiles(ROOT, EXCLUDE_PREFIXES);
   const snapDir = join(SNAPSHOTS_DIR, stackKey, id);
-  snapshotFiles(files, snapDir);
+  // Pass previous snapshot's timestamp so only changed files are saved
+  const prevEntry = state[stackKey][0];
+  const sinceTimestamp = prevEntry ? prevEntry.timestamp : undefined;
+  snapshotFiles(files, snapDir, sinceTimestamp);
 
   // Prepend entry
   const entry: StackEntry = { id, timestamp: Date.now() };
@@ -269,10 +279,9 @@ export default function (pi: ExtensionAPI) {
       }
       restoreFiles(popped.files);
 
-      // Switch session forward if available
-      const s = readState();
-      if (s.lastSessionFile) {
-        await ctx.switchSession(s.lastSessionFile, {
+      // Switch session forward using the session file stored in the redo entry
+      if (popped.entry.sessionFile) {
+        await ctx.switchSession(popped.entry.sessionFile, {
           withSession: async (newCtx) => {
             newCtx.ui.notify("Redone", "info");
           },
@@ -318,17 +327,17 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async () => {
     const id = String(Date.now());
     pushStack("undo", id);
-    pi.appendEntry("rewind-snapshots", {
-      timestamp: Date.now(),
-      type: "snapshot",
-    });
   });
 
   pi.on("session_start", async (event: any) => {
     if (event.reason === "fork" && event.previousSessionFile) {
       const state = readState();
-      state.lastSessionFile = event.previousSessionFile;
-      writeState(state);
+      // Attach session file to the most recent redo entry so each redo level
+      // remembers the correct session to switch back to.
+      if (state.redo.length > 0) {
+        state.redo[0].sessionFile = event.previousSessionFile;
+        writeState(state);
+      }
     }
   });
 }
