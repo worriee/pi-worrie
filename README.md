@@ -2,7 +2,7 @@
 
 A collection of my own pi extensions.
 
-> some are AI generated and copy of other ideas extension packages then combined with my ideas to match my desired workflow.
+> some are AI generated and mimics other extensions then combined with my ideas to match my desired workflow.
 
 ---
 
@@ -10,7 +10,7 @@ A collection of my own pi extensions.
 
 ### Updater
 
-> updates pi extensions and pi itself
+> updates pi and it's extensions
 
 Runs `pi update --all` directly without the need of using terminal.
 
@@ -22,15 +22,15 @@ Runs `pi update --all` directly without the need of using terminal.
 
 ### Rewind
 
-> Undo/Redo for Pi using Git snapshots
+> Undo/Redo using file snapshots
 
-Creates automatic Git snapshots after every agent turn. Lets you undo/redo file + conversation changes.
+Auto-saves your files after every AI turn. Lets you undo/redo file + conversation changes.
 
 **Commands:**
 
-- **`/undo`** — Reverts last file + conversation changes via Git, forks session to before last user message.
-- **`/redo`** — Re-applies the last reverted change and switches back to original session.
-- **`/rewind-history`** — Shows snapshot history inline.
+- **`/undo`** — Restores files + conversations from the last snapshot.
+- **`/redo`** — Moves forward through undone steps. Restores files + conversations
+- **`/rewind-history`** — Shows available undo/redo snapshots with file counts.
 
 ---
 
@@ -44,7 +44,6 @@ pi install git:github.com/worriee/pi-worrie
 
 ## Requirements
 
-- A Git repository in your project (run `git init` first) — required for rewind extension.
 - Pi with extension support (≥ 0.74.0).
 
 ---
