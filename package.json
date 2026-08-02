@@ -23,9 +23,10 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/pi-rewind/rewind.ts",
-      "./extensions/updater.ts"
-    ]
+      "./extensions/updater.ts",
+      "./extensions/persona-skills.ts"
+    ],
+    "skills": ["./skills"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.74.0 <1",

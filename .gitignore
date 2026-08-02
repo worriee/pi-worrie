@@ -1,7 +1,3 @@
 node_modules/
 .pi/
 AGENTS.md
-.pi-subagents/artifacts/
-extensions/pi-rewind/snapshots/undo/
-extensions/pi-rewind/snapshots/redo/
-extensions/pi-rewind/snapshots/state.json
