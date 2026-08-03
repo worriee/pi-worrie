@@ -24,7 +24,8 @@
   "pi": {
     "extensions": [
       "./extensions/updater.ts",
-      "./extensions/persona-skills.ts"
+      "./extensions/persona-skills.ts",
+      "./extensions/subagents.ts"
     ],
     "skills": ["./skills"]
   },

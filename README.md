@@ -26,7 +26,7 @@ Runs `pi update --all` directly without needing the terminal.
 
 **First run:**
 
-- **`/setup`** — Initialize workspace. Creates `.pi/workspace.json`, memory files, archive files, and the 6 `worrie-*` agent files in `.pi/agents/`. Never overwrites existing files.
+- **`/setup`** — Initialize workspace. Creates `.pi/workspace.json`, memory files, archive files, and the 7 `worrie-*` agent files in `.pi/agents/` (planner, coder, debugger, orchestrator, reviewer, secure, tester). Never overwrites existing files.
 
 **Personas:**
 
@@ -71,6 +71,32 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 - `autoLog` — after read-only persona work, asks "Save to memory?" (default ON)
 - `promptOnBlock` — shows `[BLOCKED]` status when a read-only persona tries to write (default ON)
 - `maxEntries` — archive threshold, default 10
+
+---
+
+### Subagents
+
+> Self-contained subagent tool. Launches agents from `.pi/agents/` (or `~/.pi/agent/agents/`) as isolated child pi processes. Concept inspired by pi-subagents.
+
+**Modes:**
+
+| Mode       | Syntax                                               | What it does                                                            |
+| ---------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| Single     | `{ agent, task }`                                    | One agent, one task                                                     |
+| Parallel   | `{ tasks: [{agent, task}, ...] }`                    | Several agents at once (max 8, 4 concurrent)                            |
+| Chain      | `{ chain: [{agent, task, approval?, label?}, ...] }` | Sequential steps; `{previous}` = prior step's summary                   |
+| Background | add `async: true`                                    | Runs in background, widget shows progress, collect with `subagent_wait` |
+
+**Commands:**
+
+- **`/subagents`** — Lists running subagents. Pick one to see its latest output (maximize).
+
+**Guardrails:**
+
+- Depth cap 3 (no infinite subagent loops)
+- Trust dialog on first project-agent use: "Trust once" or "Trust always" (stored in `.pi/subagents-trust.json`)
+- 50KB output cap per agent; `{previous}` capped at 8KB
+- Chain approval dialogs: Continue / Re-run (max 5) / Abort
 
 ---
 
