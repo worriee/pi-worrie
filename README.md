@@ -8,7 +8,7 @@ My personal Pi extensions.
 
 ## Extensions
 
-### Updater
+### Pi - Updater
 
 > Updates pi and its extensions.
 
@@ -20,9 +20,9 @@ Runs `pi update --all` directly without needing the terminal.
 
 ---
 
-### Persona Skills
+### Pi - Persona Skills
 
-> the same as [uveworkflow](https://github.com/worriee/uveworkflow) repo but inside Pi.
+> the same as [uveworkflow](https://github.com/worriee/uveworkflow) but inside Pi.
 
 **First run:**
 
@@ -74,18 +74,18 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 
 ---
 
-### Subagents
+### Pi - Subagents
 
-> Self-contained subagent tool. Launches agents from `.pi/agents/` (or `~/.pi/agent/agents/`) as isolated child pi processes. Concept inspired by pi-subagents.
+> Self-contained subagent tool. Launches agents from `.pi/agents/` (or `~/.pi/agent/agents/`) as isolated child pi processes. Concept inspired by [pi-subagents](https://github.com/nicobailon/pi-subagents).
 
 **Modes:**
 
-| Mode       | Syntax                                               | What it does                                                            |
-| ---------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
-| Single     | `{ agent, task }`                                    | One agent, one task                                                     |
-| Parallel   | `{ tasks: [{agent, task}, ...] }`                    | Several agents at once (max 8, 4 concurrent)                            |
-| Chain      | `{ chain: [{agent, task, approval?, label?}, ...] }` | Sequential steps; `{previous}` = prior step's summary                   |
-| Background | add `async: true`                                    | Runs in background, widget shows progress, collect with `subagent_wait` |
+| Mode       | What it does                                                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Single     | One agent, one task                                                                                                                                           |
+| Parallel   | Several agents at once (max 8, 4 concurrent)                                                                                                                  |
+| Chain      | Sequential steps; Takes previous subagent finished summary task then pass it to next subagent, performs well with `/orch-full` command for 11 pipeline stages |
+| Background | Runs in background, widget shows progress, collect with `subagent_wait`                                                                                       |
 
 **Commands:**
 
