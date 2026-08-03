@@ -814,6 +814,16 @@ export default function (pi: ExtensionAPI) {
   // ── /subagents monitor ──
   pi.registerCommand("subagents", {
     description: "List running subagents and view a run's latest output",
+    getArgumentCompletions: (prefix: string) => {
+      const text = (prefix ?? "").trim();
+      const items = Array.from(runs.values()).map((r) => ({
+        value: r.id,
+        label: r.id,
+        description: `${r.mode} ${r.agent} ${r.status}${r.totalSteps ? ` ${r.currentStep ?? 1}/${r.totalSteps}` : ""}`,
+      }));
+      const filtered = items.filter((i) => i.value.startsWith(text));
+      return filtered.length > 0 ? filtered : null;
+    },
     handler: async (_args, ctx) => {
       if (runs.size === 0) {
         ctx.ui.notify("No subagent runs.", "info");

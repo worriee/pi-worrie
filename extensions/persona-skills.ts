@@ -209,6 +209,23 @@ function nextTrackingId(content: string, prefix: string): string {
   return `${prefix}-${String(max + 1).padStart(3, "0")}`;
 }
 
+function memoryEntryIds(type: string, includeResolved: boolean): string[] {
+  const file = memPath(type);
+  if (!file || !existsSync(file)) return [];
+  const ids: string[] = [];
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (!line.startsWith("### [")) continue;
+    const active = line.match(/^### \[([A-Z]+-\d+)\]/);
+    if (active) {
+      ids.push(active[1]);
+      continue;
+    }
+    const resolved = line.match(/^### \[RESOLVED\][^\n]*\(([A-Z]+-\d+)\)/);
+    if (resolved && includeResolved) ids.push(resolved[1]);
+  }
+  return ids;
+}
+
 // ===================================================================
 // Agent file templates (written by /setup)
 // ===================================================================
@@ -1063,6 +1080,92 @@ export default function (pi: ExtensionAPI) {
   // ── /memory ──
   pi.registerCommand("memory", {
     description: "Memory management: log, show, list, resolve, edit, search, archive, config",
+    getArgumentCompletions: (prefix: string) => {
+      const text = prefix ?? "";
+      const parts = text.split(/\s+/);
+      const isAtEnd = text.endsWith(" ");
+      const done = isAtEnd ? parts.filter(Boolean) : parts.slice(0, -1);
+      const current = isAtEnd ? "" : parts[parts.length - 1];
+
+      const filter = (
+        items: { value: string; label: string; description?: string }[],
+        tok: string,
+      ) => {
+        const f = items.filter((i) => i.value.startsWith(tok));
+        return f.length > 0 ? f : null;
+      };
+
+      const SUBCOMMANDS = [
+        { value: "log", label: "log", description: "Create a new memory entry" },
+        { value: "show", label: "show", description: "View memory entries" },
+        { value: "list", label: "list", description: "All memory files with open/resolved counts" },
+        { value: "resolve", label: "resolve", description: "Move entry to Section 2 as RESOLVED" },
+        { value: "edit", label: "edit", description: "Edit a field in an entry" },
+        { value: "search", label: "search", description: "Search entries" },
+        { value: "archive", label: "archive", description: "Archive overflow entries" },
+        { value: "config", label: "config", description: "Memory settings" },
+      ];
+      const TYPES = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
+        value: key,
+        label: key,
+        description: `${t.title} -> .pi/${t.file}`,
+      }));
+      const typeKeys = Object.keys(MEMORY_TYPES);
+
+      const sub = done[0];
+      if (!sub) return filter(SUBCOMMANDS, current);
+      if (!SUBCOMMANDS.some((s) => s.value === sub)) return filter(SUBCOMMANDS, current);
+
+      if (sub === "log" || sub === "search") {
+        if (done.length === 1) return filter(TYPES, current);
+        return null; // free-text message
+      }
+      if (sub === "show" || sub === "resolve" || sub === "edit") {
+        if (done.length === 1) return filter(TYPES, current);
+        const type = done[1];
+        if (!typeKeys.includes(type)) return null;
+        if (sub === "show") {
+          const flags = [
+            { value: "--all", label: "--all", description: "All entries (active + resolved)" },
+            { value: "--open", label: "--open", description: "Active entries only" },
+            { value: "--resolved", label: "--resolved", description: "Resolved entries only" },
+          ];
+          const ids = memoryEntryIds(type, true).map((id) => ({ value: id, label: id, description: `Entry ${id}` }));
+          return filter([...flags, ...ids], current);
+        }
+        const ids = memoryEntryIds(type, sub === "edit").map((id) => ({
+          value: id,
+          label: id,
+          description: `Entry ${id}`,
+        }));
+        return filter(ids, current);
+      }
+      if (sub === "list" || sub === "archive") return null; // no more args
+      if (sub === "config") {
+        if (done.length === 1) {
+          return filter(
+            [
+              { value: "autoLog", label: "autoLog", description: "Ask before saving after read-only work" },
+              { value: "promptOnBlock", label: "promptOnBlock", description: "Show BLOCKED status on write attempts" },
+              { value: "maxEntries", label: "maxEntries", description: "Archive threshold (number)" },
+              { value: "reset", label: "reset", description: "Restore defaults" },
+            ],
+            current,
+          );
+        }
+        if (done[1] === "autoLog" || done[1] === "promptOnBlock") {
+          return filter(
+            [
+              { value: "true", label: "true", description: "Enable" },
+              { value: "false", label: "false", description: "Disable" },
+            ],
+            current,
+          );
+        }
+        return null; // maxEntries expects a number, reset takes nothing
+      }
+      return null;
+    },
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/);
       const sub = parts[0] ?? "";
