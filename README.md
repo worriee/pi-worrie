@@ -10,9 +10,7 @@ My personal Pi extensions.
 
 ### Pi - Updater
 
-> Updates pi and its extensions.
-
-Runs `pi update --all` directly without needing the terminal.
+Run updates inside pi directly without needing the terminal. Updates extensions and pi itself.
 
 **Commands:**
 

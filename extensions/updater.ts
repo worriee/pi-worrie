@@ -1,15 +1,10 @@
-/**
- * updater extension
- * c: worrie
- *
- * Registers /updater command that runs `pi update --extensions`.
- */
+// /updater command: runs pi update. c: worrie
 import { exec } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("updater", {
-    description: "Updates pi and it's extensions",
+    description: "Updates pi and its extensions",
     handler: async (_args, ctx) => {
       ctx.ui.notify("Checking for updates...", "info");
 

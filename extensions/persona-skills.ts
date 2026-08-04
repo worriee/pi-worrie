@@ -1,15 +1,5 @@
-/**
- * persona-skills extension
- * c: worrie
- *
- * Persona system + memory tracking for pi-worrie.
- * 9 personas (/ask /plan /coder /debugger /orchestrator /orch-full /reviewer /secure /tester)
- * Memory system (/memory log|show|list|resolve|edit|search|archive|config)
- * Setup (/setup), Clean (/clean), Normal (/normal)
- *
- * Read-only personas (ask, plan) work in the main session.
- * All other personas delegate to worrie-* subagents to keep the main context clean.
- */
+// Personas + memory system for pi-worrie. c: worrie
+// Ask/plan run here. Other personas delegate to worrie-* subagents.
 import {
   readFileSync,
   writeFileSync,
@@ -20,6 +10,7 @@ import {
   rmSync,
 } from "fs";
 import { join, dirname, extname } from "path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ===================================================================
@@ -36,10 +27,10 @@ const WORKSPACE_FILE = join(CONFIG_DIR, "workspace.json");
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const SHELL_TOOLS = [...READ_ONLY_TOOLS, "subagent", "subagent_wait"];
 
-// Short memory type names -> file + tracking prefix (null prefix = no tracking numbers)
+// Memory type names -> file + id prefix (null = no tracking ids)
 const MEMORY_TYPES: Record<string, { file: string; prefix: string | null; title: string }> = {
   err: { file: "error_memory.md", prefix: "ERR", title: "Errors" },
-  code: { file: "codebase_map.md", prefix: null, title: "Codebase Map" },
+  code: { file: "codebase_map.md", prefix: "FN-FE", title: "Codebase Map" },
   impl: { file: "implementation_memory.md", prefix: "FLOW", title: "Implementation" },
   sec: { file: "security_memory.md", prefix: "SEC", title: "Security" },
   rev: { file: "review_memory.md", prefix: "REVIEW", title: "Review" },
@@ -201,8 +192,10 @@ function setupDone(): boolean {
   }
 }
 
+// Next id for a file. Template examples hold 001, so the first real log gets 002 (REVIEW-017).
 function nextTrackingId(content: string, prefix: string): string {
-  const re = new RegExp(`### \\[${prefix}-(\\d+)\\]`, "g");
+  // Matches 3- and 4-hash headers (codebase_map uses ####)
+  const re = new RegExp(`###+ \\[${prefix}-(\\d+)\\]`, "g");
   let max = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(content))) max = Math.max(max, parseInt(m[1], 10));
@@ -214,13 +207,13 @@ function memoryEntryIds(type: string, includeResolved: boolean): string[] {
   if (!file || !existsSync(file)) return [];
   const ids: string[] = [];
   for (const line of readFileSync(file, "utf8").split("\n")) {
-    if (!line.startsWith("### [")) continue;
-    const active = line.match(/^### \[([A-Z]+-\d+)\]/);
+    if (!/^#{3,4} \[/.test(line)) continue;
+    const active = line.match(/^#{3,4} \[([A-Z]+(?:-[A-Z]+)*-\d+)\]/);
     if (active) {
       ids.push(active[1]);
       continue;
     }
-    const resolved = line.match(/^### \[RESOLVED\][^\n]*\(([A-Z]+-\d+)\)/);
+    const resolved = line.match(/^#{3,4} \[RESOLVED\][^\n]*\(([A-Z]+(?:-[A-Z]+)*-\d+)\)/);
     if (resolved && includeResolved) ids.push(resolved[1]);
   }
   return ids;
@@ -230,9 +223,7 @@ function memoryEntryIds(type: string, includeResolved: boolean): string[] {
 // Agent file templates (written by /setup)
 // ===================================================================
 
-// Agent specs: persona comes from ../skills/<dir>/SKILL.md (identical to .pi/skills).
-// /setup injects the tools frontmatter, appends memory protocol + output contract,
-// then attaches the WORKSPACE RULES section from ../rules/ (identical to .pi/rules).
+// Agent file = ../skills persona + tools + protocol + WORKSPACE RULES from ../rules/.
 const AGENT_SPECS: Record<string, { skill: string; tools: string; memoryProtocol?: string; outputContract?: string }> = {
   "worrie-planner.md": {
     skill: "planner",
@@ -341,7 +332,6 @@ Return to the parent: stages run, pass/fail per stage, coverage numbers, memory 
 /** Directory of this extension file (works under jiti CJS and ESM loading). */
 function extensionDir(): string {
   try {
-    const { fileURLToPath } = require("node:url");
     return dirname(fileURLToPath(import.meta.url));
   } catch {
     return __dirname;
@@ -368,11 +358,7 @@ function rulesBlock(rulesText: string): string {
   return `${RULES_START}\n\n${rulesText}\n\n${RULES_END}`;
 }
 
-/**
- * Build the full agent file content for one spec:
- * skill persona (with injected tools frontmatter) + memory protocol +
- * output contract + workspace rules section.
- */
+// Agent file = skill persona + tools + memory protocol + output contract + workspace rules.
 function buildAgentFile(
   spec: { skill: string; tools: string; memoryProtocol?: string; outputContract?: string },
   rulesText: string,
@@ -472,16 +458,17 @@ function logMemory(ctx: any, type: string, message: string): void {
   const id = t.prefix ? nextTrackingId(content, t.prefix) : null;
   const title = message.split("\n")[0].slice(0, 80);
   const entry = buildMemoryEntry(type, id, title, message);
-  const sec1 = content.indexOf("## 1.");
-  const insertAt = sec1 === -1 ? content.length : sec1 + content.slice(sec1).indexOf("\n") + 1;
+  let sec1 = content.indexOf("## 1.");
+  let insertAt = sec1 === -1 ? content.length : sec1 + content.slice(sec1).indexOf("\n") + 1;
+  if (type === "code") {
+    const layer = content.indexOf("### 1A. Logic, Functions & Code Structures");
+    if (layer >= 0) insertAt = layer + content.slice(layer).indexOf("\n") + 1;
+  }
   writeFileSync(file, content.slice(0, insertAt) + "\n" + entry + content.slice(insertAt));
   ctx.ui.notify(`Logged ${id ?? type} to ${t.file}`, "info");
 }
 
-/**
- * Build a memory entry using the exact per-type field formats from the
- * user's workflow templates (templates/memory/*.md).
- */
+// Memory entry with the exact fields from the user workflow templates.
 function buildMemoryEntry(type: string, id: string | null, title: string, message: string): string {
   const msg = message.replace(/\n/g, "\n  ");
   const now = pstNow();
@@ -494,6 +481,8 @@ function buildMemoryEntry(type: string, id: string | null, title: string, messag
       return `### [${id}] ${title} (SEVERITY)\n\n- **Vulnerability Rating**: [Score 0 - 10]\n- **Severity Level**: CRITICAL | HIGH | MEDIUM | LOW\n- **Attacker Exploit Methodology**: ${msg}\n- **Production-Ready Remediation Plan**: [Step-by-step fix outline]\n- **Status**: OPEN\n- **Logged At**: ${now}\n\n`;
     case "rev":
       return `### [${id}] ${title}\n\n- **File/Path**: _path/to/file.ext:line_number_\n- **Severity**: CRITICAL | HIGH | MEDIUM | LOW\n- **Category**: Security | Performance | Maintainability | Correctness | Testability\n- **Finding**: ${msg}\n- **Recommendation**: [Specific remediation steps or code suggestion]\n- **Status**: OPEN\n- **Reviewed At**: ${now}\n\n`;
+    case "code":
+      return `#### [${id}] ${title}\n\n- **Purpose**: ${msg}\n- **Location**: _file path where defined_\n- **Input/Output**: _parameters and return values_\n- **Dependencies**: _what other functions/files does it rely on?_\n- **Called By**: _which components or functions invoke this?_\n- **Side Effects**: _any state mutations, API calls, or storage operations_\n\n`;
     case "test":
       return `### [${id}] ${title}\n\n- **File/Path**: _path/to/test_file.ext_\n- **Type**: Unit | Integration | E2E | Performance\n- **Preconditions**: [Required setup or state before test execution]\n- **Test Input**: [Specific data or mock state required]\n- **Expected Output**: [Exact expected result or behavior]\n- **Assertions**: [Specific assertions to validate]\n- **Framework**: Vitest | Playwright\n- **Coverage Target**: [0-100%]\n- **Coverage Status**: COVERED | UNCOVERED | PARTIAL\n- **Logged At**: ${now}\n\n`;
     default:
@@ -509,8 +498,9 @@ function showMemory(ctx: any, type: string, opt: string): void {
     return;
   }
   const content = readFileSync(file, "utf8");
-  const blocks = content.split("\n### ").slice(1).map((b) => "### " + b);
-  const entries = blocks.filter((b) => /^### \[(RESOLVED\] |[A-Z]+-\d+\])/.test(b));
+  const raw = content.split("\n###").slice(1).map((b) => "###" + b);
+  const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
+  const entries = blocks.filter((b) => /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+\])/.test(b));
   let list = entries;
   if (opt === "--open") list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
   else if (opt === "--resolved") list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
@@ -605,13 +595,13 @@ function editMemory(ctx: any, type: string, id: string, field: string, value: st
   const content = readFileSync(file, "utf8");
   const lines = content.split("\n");
   const start = lines.findIndex(
-    (l) => l.startsWith(`### [${id}]`) || (l.startsWith("### [RESOLVED]") && l.includes(`(${id})`)),
+    (l) => /^#{3,4} \[/.test(l) && l.includes(`[${id}]`) || (/^#{3,4} \[RESOLVED\]/.test(l) && l.includes(`(${id})`)),
   );
   if (start === -1) {
     ctx.ui.notify(`Entry ${id} not found.`, "warning");
     return;
   }
-  let end = lines.findIndex((l, i) => i > start && l.startsWith("### ["));
+  let end = lines.findIndex((l, i) => i > start && /^#{3,4} \[/.test(l));
   if (end === -1) {
     const s2 = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
     end = s2 === -1 ? lines.length : s2;

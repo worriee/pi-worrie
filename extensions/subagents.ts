@@ -1,19 +1,5 @@
-/**
- * subagents extension
- * c: worrie
- *
- * Spawns agent files (.pi/agents/*.md, ~/.pi/agent/agents/*.md) as
- * isolated child pi processes. Concept inspired by pi-subagents.
- *
- * Modes:
- *   - single:   { agent, task }
- *   - parallel: { tasks: [{ agent, task }, ...] }
- *   - chain:    { chain: [{ agent, task, approval?, label? }, ...] }
- *
- * All modes support async: true (background). Chains support per-step
- * approval dialogs (Continue / Re-run / Abort) for gated workflows
- * like the 11-stage pipeline.
- */
+// Runs .pi/agents/worrie-*.md as child pi processes. c: worrie
+// Modes: single, parallel (up to 8 tasks), chain (per-step approval). All support async background.
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -296,12 +282,7 @@ function compactResult(result: any, max = 90): string {
   }
 }
 
-/**
- * Attach stdout event parsing to a child pi process. Streams tool calls,
- * tool results and assistant text into the step transcript, counts tool
- * calls, and forwards assistant text + messages. Flushes partial lines on
- * close (listener registered before the caller's own close handler).
- */
+// Read child stdout: log tool calls + text into the transcript, count tool calls.
 function attachStreamParser(
   proc: ChildProcess,
   step: StepState,
@@ -505,7 +486,6 @@ async function executeChain(
     status: "queued" as const,
     toolCalls: 0,
     transcript: [],
-    suggestions: [],
   }));
   let previous = "";
   let stepIndex = 0;
@@ -675,7 +655,6 @@ async function executeParallel(
     status: "queued" as const,
     toolCalls: 0,
     transcript: [],
-    suggestions: [],
   }));
   const results: RunResult[] = new Array(tasks.length);
   let nextIndex = 0;
@@ -1119,8 +1098,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── /subagents monitor ──
   pi.registerCommand("subagents", {
-    description:
-      "List subagents (per stage), open a live raw view, suggest ideas",
+    description: "Open a list of subagents and see subagents realtime.",
     getArgumentCompletions: (prefix: string) => {
       const text = (prefix ?? "").trim();
       const items = Array.from(runs.values()).map((r) => ({
@@ -1187,10 +1165,7 @@ function transcriptLine(line: TranscriptLine): string {
   return `[${time}] ${line.text}`;
 }
 
-/**
- * Full-screen raw live view of one subagent step.
- * Keys: up/down scroll, i = suggest idea, q = exit to main chat.
- */
+// Full-screen live view of a subagent. Arrows scroll/switch, q closes.
 async function openSubagentView(
   ui: any,
   targets: { run: RunState; step: StepState }[],

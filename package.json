@@ -17,7 +17,6 @@
     "pi-package",
     "pi-extension",
     "pi-coding-agent",
-    "pi-rewind",
     "pi-updater",
     "pi-worrie"
   ],
@@ -27,10 +26,15 @@
       "./extensions/persona-skills.ts",
       "./extensions/subagents.ts"
     ],
-    "skills": ["./skills"]
+    "skills": [
+      "./skills"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.74.0 <1",
     "@earendil-works/pi-tui": ">=0.74.0 <1"
+  },
+  "dependencies": {
+    "typebox": "^1.3.7"
   }
 }
