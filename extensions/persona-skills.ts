@@ -39,10 +39,10 @@ const SHELL_TOOLS = [...READ_ONLY_TOOLS, "subagent", "subagent_wait"];
 // Short memory type names -> file + tracking prefix (null prefix = no tracking numbers)
 const MEMORY_TYPES: Record<string, { file: string; prefix: string | null; title: string }> = {
   err: { file: "error_memory.md", prefix: "ERR", title: "Errors" },
-  code: { file: "codebase_map.md", prefix: "FLOW", title: "Codebase Map" },
+  code: { file: "codebase_map.md", prefix: null, title: "Codebase Map" },
   impl: { file: "implementation_memory.md", prefix: "FLOW", title: "Implementation" },
   sec: { file: "security_memory.md", prefix: "SEC", title: "Security" },
-  rev: { file: "review_memory.md", prefix: "REV", title: "Review" },
+  rev: { file: "review_memory.md", prefix: "REVIEW", title: "Review" },
   test: { file: "test_memory.md", prefix: "TEST", title: "Test" },
   proj: { file: join("..", "rules", "project_memory.md"), prefix: null, title: "Project" },
 };
@@ -230,140 +230,56 @@ function memoryEntryIds(type: string, includeResolved: boolean): string[] {
 // Agent file templates (written by /setup)
 // ===================================================================
 
-const AGENT_TEMPLATES: Record<string, string> = {
-  "worrie-planner.md": `---
-name: worrie-planner
-description: Planner persona - read-only planning, produces structured roadmaps
-tools: read, grep, find, ls
-systemPromptMode: replace
-inheritProjectContext: true
----
-
-You are the PLANNER persona from the pi-worrie skill system.
-
-## Mission
-Gather context and produce a structured engineering plan. You NEVER write code.
-
-## Execution Rules
-1. Read-only: you may read, grep, find, and ls files. Never write, edit, or run bash.
-2. Gather context, identify constraints, ask clarifying questions if needed.
-3. Produce a Markdown plan: architecture strategy, step-by-step task breakdown, verification strategy.
-4. End with a concise summary: the plan's key steps (max 15 lines).
-
-## Output Contract
+// Agent specs: persona comes from ../skills/<dir>/SKILL.md (identical to .pi/skills).
+// /setup injects the tools frontmatter, appends memory protocol + output contract,
+// then attaches the WORKSPACE RULES section from ../rules/ (identical to .pi/rules).
+const AGENT_SPECS: Record<string, { skill: string; tools: string; memoryProtocol?: string; outputContract?: string }> = {
+  "worrie-planner.md": {
+    skill: "planner",
+    tools: "read, grep, find, ls",
+    outputContract: `## Output Contract
 Return to the parent: the plan summary only - key steps, files involved, risks. Keep it concise.
 `,
-
-  "worrie-coder.md": `---
-name: worrie-coder
-description: Coder persona - implements production-grade features, writes any memory file
-tools: read, grep, find, ls, bash, write, edit
-systemPromptMode: replace
-inheritProjectContext: true
----
-
-You are the CODER persona from the pi-worrie skill system.
-
-## Mission
-Implement production-grade features and clean, structured code based on approved plans.
-
-## Execution Rules
-1. Write idiomatic, self-documenting code. Follow existing codebase patterns and conventions.
-2. Never guess or hallucinate code paths - read existing files first.
-3. Handle errors gracefully, minimize runtime overhead.
-4. Only modify files directly related to the task. No broken imports, no collateral changes.
-5. Never write partial code or lazy placeholders. Deliver complete files.
-
-## Memory Protocol (MANDATORY)
+  },
+  "worrie-coder.md": {
+    skill: "coder",
+    tools: "read, grep, find, ls, bash, write, edit",
+    memoryProtocol: `## Memory Protocol (MANDATORY)
 - You may write to ANY memory file as relevant to the task:
   - \`err\` -> .pi/memory/error_memory.md (ERR-NNN)
-  - \`code\` -> .pi/memory/codebase_map.md (FLOW-NNN)
+  - \`code\` -> .pi/memory/codebase_map.md (follow its layer format: FN-FE / FILE-FE / DB / STG / SVC / DEP / OPS)
   - \`impl\` -> .pi/memory/implementation_memory.md (FLOW-NNN)
   - \`sec\` -> .pi/memory/security_memory.md (SEC-NNN)
-  - \`rev\` -> .pi/memory/review_memory.md (REV-NNN)
+  - \`rev\` -> .pi/memory/review_memory.md (REVIEW-NNN)
   - \`test\` -> .pi/memory/test_memory.md (TEST-NNN)
   - \`proj\` -> .pi/rules/project_memory.md
 - New entries go to the TOP of Section 1 (LIFO), with format:
   \`### [FLOW-004] Short Title\` followed by structured bullet fields.
-- STRICT ID RULES: always square brackets + 3-digit zero-padded number ([ERR-001], [FLOW-007], [REV-012], [SEC-003], [TEST-002]). Never omit brackets, never drop padding.
+- STRICT ID RULES: always square brackets + 3-digit zero-padded number ([ERR-001], [FLOW-007], [REVIEW-012], [SEC-003], [TEST-002]). Never omit brackets, never drop padding.
 - NEVER delete, truncate, or rewrite existing entries.
-
-## Output Contract
+`,
+    outputContract: `## Output Contract
 Return to the parent: files changed, logic added, validation run, memory entries written (IDs). Keep it concise.
 `,
-
-  "worrie-debugger.md": `---
-name: worrie-debugger
-description: Debugger persona - traces errors to root cause, applies surgical fixes, logs ERR entries
-tools: read, grep, find, ls, bash, write, edit
-systemPromptMode: replace
-inheritProjectContext: true
----
-
-You are the DEBUGGER persona from the pi-worrie skill system.
-
-## Mission
-Analyze errors, logs, and unexpected behaviors. Find the precise root cause and formulate a permanent, elegant fix. Never patch symptoms.
-
-## Execution Rules
-1. Isolate and reproduce - locate the exact line, module, or state transition where failure occurs.
-2. Root-cause analysis - distinguish symptoms from causes. Explain WHY, not just WHERE.
-3. Surgical resolution - fix the underlying logic failure without breaking collateral systems.
-4. Verification - outline how to test the fix so it cannot reappear.
-
-## Memory Protocol (MANDATORY)
+  },
+  "worrie-debugger.md": {
+    skill: "debugger",
+    tools: "read, grep, find, ls, bash, write, edit",
+    memoryProtocol: `## Memory Protocol (MANDATORY)
 - DEFAULT: log to \`.pi/memory/error_memory.md\` (ERR-NNN).
   - Active blockers -> Section 1, LIFO top: \`### [ERR-NNN] Short Title\`
   - Fixed bugs -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (ERR-NNN)\` keeping the original number.
 - When the user explicitly asks, you may also write ANY other memory file (code, impl, sec, rev, test, proj).
 - NEVER delete, truncate, or rewrite entries in Section 2.
-
-## Output Contract
+`,
+    outputContract: `## Output Contract
 Return to the parent: root cause, files changed, fix summary, memory entry IDs written (ERR-XXX). Keep it concise.
 `,
-
-  "worrie-orchestrator.md": `---
-name: worrie-orchestrator
-description: Orchestrator persona - auto-detects persona or runs the full 11-stage pipeline
-tools: read, grep, find, ls, bash, write, edit, subagent, subagent_wait
-systemPromptMode: replace
-inheritProjectContext: true
----
-
-You are the ORCHESTRATOR persona from the pi-worrie skill system.
-
-## Mission
-You are an industry-level workflow manager mentoring a student. Two modes:
-
-### Mode A: AUTO-DETECT (default)
-Read the user prompt, choose the matching persona, and delegate to it:
-- bug/error/stack trace -> worrie-debugger
-- review/quality -> worrie-reviewer
-- security -> worrie-secure
-- tests -> worrie-tester
-- implementation/feature -> worrie-coder
-- explanation/analysis -> read-only ask logic
-Ask the user to confirm the chosen persona, then launch that subagent.
-
-### Mode B: FULL 11-STAGE PIPELINE (when instructed)
-Execute in strict order, asking user approval before EVERY stage transition, and explaining each stage in simple student-friendly language:
-
-1. PLAN      - structured roadmap, wait for approval
-2. CODE      - delegate to worrie-coder
-3. TEST      - delegate to worrie-tester (typecheck -> lint -> unit -> integration -> E2E -> coverage)
-4. DEBUG     - delegate to worrie-debugger (explain symptom/root cause/solution)
-5. SECURE    - delegate to worrie-secure (OWASP checks, score 0-10)
-6. DEBUG     - second pass: catch bugs introduced by security fixes
-7. TEST      - second full pass
-8. CLEAN     - remove console.log/debugger/dead code, ask before removing
-9. REVIEW    - delegate to worrie-reviewer
-10. DOCUMENT - write summary to implementation_memory.md and project_memory.md
-11. ASK      - present summary, ask next move
-
-Loop tracking: max 5 loop iterations per stage. If exceeded, HALT and report to the user.
-Emit [STAGE n/11: NAME] markers in your progress updates (e.g. "[STAGE 3/11: TEST]") and [LOOP x/5: A -> B] on loops so the status bar can track progress.
-
-## Memory Protocol (MANDATORY)
+  },
+  "worrie-orchestrator.md": {
+    skill: "orchestrator",
+    tools: "read, grep, find, ls, bash, write, edit, subagent, subagent_wait",
+    memoryProtocol: `## Memory Protocol (MANDATORY)
 - Write to whichever memory file matches the persona/stage currently executing:
   - PLAN/DOCUMENT -> impl + proj
   - CODE -> impl
@@ -372,315 +288,179 @@ Emit [STAGE n/11: NAME] markers in your progress updates (e.g. "[STAGE 3/11: TES
   - SECURE -> sec
   - REVIEW -> rev
 - New entries go to the TOP of Section 1 (LIFO). NEVER delete existing entries.
-
-## Output Contract
+`,
+    outputContract: `## Output Contract
 Return to the parent: stages completed, subagents used, memory entries written (IDs). Keep it concise.
 `,
-
-  "worrie-reviewer.md": `---
-name: worrie-reviewer
-description: Reviewer persona - structured code review, logs REV findings
-tools: read, grep, find, ls, bash, write, edit
-systemPromptMode: replace
-inheritProjectContext: true
----
-
-You are the REVIEWER persona from the pi-worrie skill system.
-
-## Mission
-Perform rigorous structured code reviews: correctness, security, performance, maintainability, testability.
-
-## Execution Rules
-1. STRICTLY read-only on source code. NEVER modify, refactor, or edit functional code files.
-2. Classify findings: CRITICAL / HIGH / MEDIUM / LOW.
-3. Output format per finding: file path, severity, category, finding, recommendation.
-
-## Memory Protocol (MANDATORY)
-- Log findings to \`.pi/memory/review_memory.md\` (REV-NNN):
-  - Active findings -> Section 1, LIFO top: \`### [REV-NNN] Short Title\`
-  - Resolved findings -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (REV-NNN)\` keeping the original number.
+  },
+  "worrie-reviewer.md": {
+    skill: "reviewer",
+    tools: "read, grep, find, ls, bash, write, edit",
+    memoryProtocol: `## Memory Protocol (MANDATORY)
+- Log findings to \`.pi/memory/review_memory.md\` (REVIEW-NNN):
+  - Active findings -> Section 1, LIFO top: \`### [REVIEW-NNN] Short Title\`
+  - Resolved findings -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (REVIEW-NNN)\` keeping the original number.
 - NEVER delete, truncate, or rewrite entries in Section 2.
-
-## Output Contract
+`,
+    outputContract: `## Output Contract
 Return to the parent: findings with severity, files reviewed, memory entry IDs written. Keep it concise.
 `,
-
-  "worrie-secure.md": `---
-name: worrie-secure
-description: Security persona - vulnerability scanning, threat assessment, logs SEC findings
-tools: read, grep, find, ls, bash, write, edit
-systemPromptMode: replace
-inheritProjectContext: true
----
-
-You are the SECURITY persona from the pi-worrie skill system.
-
-## Mission
-Inspect the project for data leaks, structural flaws, credential exposure, and injection points through an attacker lens. Provide threat explanations, a security score, and remediation plans.
-
-## Execution Rules
-1. STRICTLY read-only on source code. NEVER modify, refactor, or edit functional code files.
-2. Aggressive threat modeling - explain exactly how an attacker would exploit each flaw.
-3. Conclude with an overall security score from 0 to 10.
-
-## Memory Protocol (MANDATORY)
+  },
+  "worrie-secure.md": {
+    skill: "secure",
+    tools: "read, grep, find, ls, bash, write, edit",
+    memoryProtocol: `## Memory Protocol (MANDATORY)
 - Log vulnerabilities to \`.pi/memory/security_memory.md\` (SEC-NNN):
   - Active -> Section 1, LIFO top: \`### [SEC-NNN] Short Title (SEVERITY)\`
   - Patched -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (SEC-NNN)\` and update the Overall Security Score.
 - NEVER delete, truncate, or rewrite entries in Section 2.
-
-## Output Contract
+`,
+    outputContract: `## Output Contract
 Return to the parent: vulnerabilities found, security score, remediation plan, memory entry IDs. Keep it concise.
 `,
-
-  "worrie-tester.md": `---
-name: worrie-tester
-description: Tester persona - test strategies, ordered pipeline, coverage gates, logs TEST entries
-tools: read, grep, find, ls, bash, write, edit
-systemPromptMode: replace
-inheritProjectContext: true
----
-
-You are the TESTER persona from the pi-worrie skill system.
-
-## Mission
-Guarantee software reliability: design test strategies, run the ordered validation pipeline, enforce coverage thresholds.
-
-## Mandatory Pipeline (strict order, HALTS on failure)
-1. Static analysis (typecheck + lint)
-2. Unit tests (Vitest)
-3. Integration tests (Vitest)
-4. End-to-end tests (Playwright)
-5. Coverage report (90% critical / 80% utility / 70% UI)
-
-Coverage gates: critical business logic 90%, utility functions 80%, UI components 70%. Missing framework -> state it, give the install command, HALT.
-
-## Execution Rules
-- STRICTLY read-only on source code. Test file creation is permitted.
-- If a test strategy is implemented/verified, migrate it to Section 2 in the SAME response.
-
-## Memory Protocol (MANDATORY)
+  },
+  "worrie-tester.md": {
+    skill: "tester",
+    tools: "read, grep, find, ls, bash, write, edit",
+    memoryProtocol: `## Memory Protocol (MANDATORY)
 - Log strategies to \`.pi/memory/test_memory.md\` (TEST-NNN):
   - Active -> Section 1, LIFO top: \`### [TEST-NNN] Short Title\`
   - Resolved -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (TEST-NNN)\` keeping the original number.
 - NEVER delete, truncate, or rewrite entries in Section 2.
-
-## Output Contract
+`,
+    outputContract: `## Output Contract
 Return to the parent: stages run, pass/fail per stage, coverage numbers, memory entry IDs. Keep it concise.
 `,
+  },
 };
+
+// ===================================================================
+// Agent file construction: persona (../skills) + protocol + WORKSPACE RULES
+// ===================================================================
+
+/** Directory of this extension file (works under jiti CJS and ESM loading). */
+function extensionDir(): string {
+  try {
+    const { fileURLToPath } = require("node:url");
+    return dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return __dirname;
+  }
+}
+
+const PKG_ROOT = join(extensionDir(), "..");
+
+/** Full workspace rules text, identical to .pi/rules (two files, joined). */
+function loadWorkspaceRules(): string {
+  try {
+    const cli = readFileSync(join(PKG_ROOT, "rules", ".clinerules"), "utf8");
+    const sys = readFileSync(join(PKG_ROOT, "rules", "system_instructions.md"), "utf8");
+    return `${cli}\n\n---\n\n${sys}`;
+  } catch {
+    return "";
+  }
+}
+
+const RULES_START = "## WORKSPACE RULES (pi-worrie -- immutable)";
+const RULES_END = "<!-- end worrie workspace rules -->";
+
+function rulesBlock(rulesText: string): string {
+  return `${RULES_START}\n\n${rulesText}\n\n${RULES_END}`;
+}
+
+/**
+ * Build the full agent file content for one spec:
+ * skill persona (with injected tools frontmatter) + memory protocol +
+ * output contract + workspace rules section.
+ */
+function buildAgentFile(
+  spec: { skill: string; tools: string; memoryProtocol?: string; outputContract?: string },
+  rulesText: string,
+): string {
+  const skillPath = join(PKG_ROOT, "skills", spec.skill, "SKILL.md");
+  let skill = readFileSync(skillPath, "utf8");
+  if (skill.startsWith("---")) {
+    const end = skill.indexOf("\n---", 3);
+    if (end > 0) {
+      skill = skill.slice(0, end) + `\ntools: ${spec.tools}\nsystemPromptMode: replace\ninheritProjectContext: true` + skill.slice(end);
+    }
+  }
+  const extra = [spec.memoryProtocol, spec.outputContract].filter(Boolean).join("\n");
+  return skill + (extra ? `\n\n${extra}` : "") + "\n\n" + rulesBlock(rulesText) + "\n";
+}
+
+/** Refresh the rules section in an existing agent file; returns true if changed. */
+function refreshRulesSection(filePath: string, rulesText: string): boolean {
+  let content: string;
+  try {
+    content = readFileSync(filePath, "utf8");
+  } catch {
+    return false;
+  }
+  const block = rulesBlock(rulesText);
+  const sIdx = content.indexOf(RULES_START);
+  const eIdx = content.indexOf(RULES_END);
+  let next: string;
+  if (sIdx >= 0 && eIdx >= 0) {
+    const head = content.slice(0, sIdx).replace(/\s+$/, "");
+    const tail = content.slice(eIdx + RULES_END.length).replace(/^\s+/, "");
+    next = tail ? `${head}\n\n${block}\n\n${tail}` : `${head}\n\n${block}\n`;
+  } else if (sIdx >= 0) {
+    next = content.slice(0, sIdx).replace(/\s+$/, "") + "\n\n" + block + "\n";
+  } else {
+    next = content.replace(/\s+$/, "") + "\n\n" + block + "\n";
+  }
+  if (next === content) return false;
+  writeFileSync(filePath, next);
+  return true;
+}
 
 // ===================================================================
 // Memory file templates (written by /setup when missing)
 // ===================================================================
 
+function loadMemoryTemplate(file: string): string {
+  try {
+    return readFileSync(join(PKG_ROOT, "templates", "memory", file), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function loadArchiveTemplate(file: string): string {
+  try {
+    return readFileSync(join(PKG_ROOT, "templates", "archives", file), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function loadProjectMemoryTemplate(): string {
+  try {
+    return readFileSync(join(PKG_ROOT, "templates", "rules", "project_memory.md"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
 const MEMORY_TEMPLATES: Record<string, string> = {
-  "error_memory.md": `# Workspace Error Log & Debugging Memory
-
-## 0. Last Synchronized Checkpoint
-
-- **Last Error Check**: ${pstNow()}
-
-## 1. Active & Unresolved Errors
-
-_List errors currently blocking development. Update this section immediately when a new error occurs during execution or user prompting._
-
-## 2. Historical & Resolved Errors
-
-_Move errors to this section once they are completely verified as fixed. This serves as historical memory to prevent the AI from re-introducing the same bugs._
-
-<!-- c: worrie -->
-`,
-  "codebase_map.md": `# Codebase Map & File Registry
-
-## 0. Last Synchronized Checkpoint
-
-- **Last AI Analysis Timestamp**: ${pstNow()}
-
-## 1. Visual Codebase Overview
-
-_Project directory tree and file purposes live here. Updated by /setup or /memory log code._
-
-<!-- c: worrie -->
-`,
-  "implementation_memory.md": `# Implementation Plans & Feature Flow Memory
-
-## 0. Last Synchronized Checkpoint
-
-- **Last AI Analysis Timestamp**: ${pstNow()}
-
-## 1. Documented Implementation Plans & Feature Flows
-
-_Feature flows, architecture designs, and execution roadmaps live here._
-
-## 2. Historical & Resolved Implementation Plans
-
-_Completed plans migrate here for reference._
-
-<!-- c: worrie -->
-`,
-  "security_memory.md": `# Security Analysis & Vulnerability Memory
-
-## 0. Last Synchronized Checkpoint
-
-- **Last AI Analysis Timestamp**: ${pstNow()}
-
-## 1. Active & Unresolved Vulnerabilities
-
-_Active vulnerabilities with severity ratings live here._
-
-## 2. Historical & Resolved Vulnerabilities
-
-_Patched vulnerabilities migrate here._
-
-## 3. Overall Security Score
-
-- **Current Score**: 0
-- **Last Assessment**: ${pstNow()}
-- **Summary**: Not yet assessed.
-
-<!-- c: worrie -->
-`,
-  "review_memory.md": `# Code Review Log Memory
-
-## 0. Last Synchronized Checkpoint
-
-- **Last AI Analysis Timestamp**: ${pstNow()}
-
-## 1. Active & Open Review Findings
-
-_Active review findings live here._
-
-## 2. Historical & Resolved Reviews
-
-_Resolved findings migrate here._
-
-<!-- c: worrie -->
-`,
-  "test_memory.md": `# Test Strategy & Coverage Memory
-
-## 0. Last Synchronized Checkpoint
-
-- **Last AI Analysis Timestamp**: ${pstNow()}
-
-## 1. Active Test Strategies
-
-_Active test strategies live here._
-
-## 2. Historical & Resolved Test Strategies
-
-_Resolved strategies migrate here._
-
-<!-- c: worrie -->
-`,
+  "error_memory.md": loadMemoryTemplate("error_memory.md"),
+  "implementation_memory.md": loadMemoryTemplate("implementation_memory.md"),
+  "security_memory.md": loadMemoryTemplate("security_memory.md"),
+  "review_memory.md": loadMemoryTemplate("review_memory.md"),
+  "test_memory.md": loadMemoryTemplate("test_memory.md"),
+  "codebase_map.md": loadMemoryTemplate("codebase_map.md"),
 };
 
 const ARCHIVE_TEMPLATES: Record<string, string> = {
-  "error_archive.md": `# Error Memory Archive
-
-- **Source File**: \`error_memory.md\`
-- **Last Archived At**: ${pstNow()}
-- **Total Entries Archived**: 0
-
----
-
-## Archived Entries
-
-<!-- c: worrie -->
-`,
-  "implementation_archive.md": `# Implementation Memory Archive
-
-- **Source File**: \`implementation_memory.md\`
-- **Last Archived At**: ${pstNow()}
-- **Total Entries Archived**: 0
-
----
-
-## Archived Entries
-
-<!-- c: worrie -->
-`,
-  "security_archive.md": `# Security Memory Archive
-
-- **Source File**: \`security_memory.md\`
-- **Last Archived At**: ${pstNow()}
-- **Total Entries Archived**: 0
-
----
-
-## Archived Entries
-
-<!-- c: worrie -->
-`,
-  "review_archive.md": `# Review Memory Archive
-
-- **Source File**: \`review_memory.md\`
-- **Last Archived At**: ${pstNow()}
-- **Total Entries Archived**: 0
-
----
-
-## Archived Entries
-
-<!-- c: worrie -->
-`,
-  "test_archive.md": `# Test Memory Archive
-
-- **Source File**: \`test_memory.md\`
-- **Last Archived At**: ${pstNow()}
-- **Total Entries Archived**: 0
-
----
-
-## Archived Entries
-
-<!-- c: worrie -->
-`,
+  "error_archive.md": loadArchiveTemplate("error_archive.md"),
+  "implementation_archive.md": loadArchiveTemplate("implementation_archive.md"),
+  "review_archive.md": loadArchiveTemplate("review_archive.md"),
+  "security_archive.md": loadArchiveTemplate("security_archive.md"),
+  "test_archive.md": loadArchiveTemplate("test_archive.md"),
 };
 
-const PROJECT_MEMORY_TEMPLATE = `# Project Memory & Context Tracker
-
-## 0. Last Synchronized Checkpoint
-
-- **Last AI Analysis Timestamp**: ${pstNow()}
-
-## 1. Project Overview
-
-### Project Identity
-
-- **Project Name**: ${""}
-- **Primary Goal**: ${""}
-- **Target Users / Audience**: ${""}
-- **Current Phase**: ${""}
-- **Active Branch**: ${""}
-
-## 2. Active Milestones & Roadmap
-
-_Active milestones live here._
-
-## 3. Current Sprint & Active Tasks
-
-_Active tasks live here._
-
-## 4. Completed Milestones
-
-_Completed milestones live here._
-
-## 5. Pending Tasks & Backlog
-
-_Backlog items live here._
-
-## 6. Architectural Decisions & Constraints
-
-_Architectural decisions live here._
-
-<!-- c: worrie -->
-`;
-
-// ===================================================================
-// Memory operations
-// ===================================================================
-
+const PROJECT_MEMORY_TEMPLATE = loadProjectMemoryTemplate();
 function logMemory(ctx: any, type: string, message: string): void {
   const file = memPath(type);
   if (!file || !existsSync(file)) {
@@ -691,11 +471,34 @@ function logMemory(ctx: any, type: string, message: string): void {
   const content = readFileSync(file, "utf8");
   const id = t.prefix ? nextTrackingId(content, t.prefix) : null;
   const title = message.split("\n")[0].slice(0, 80);
-  const entry = `### [${id ?? "NOTE"}] ${title}\n\n- **Context**: ${message.replace(/\n/g, "\n  ")}\n- **Status**: OPEN\n- **Logged By**: ${activePersona ?? "user"}\n- **Logged At**: ${pstNow()}\n\n`;
+  const entry = buildMemoryEntry(type, id, title, message);
   const sec1 = content.indexOf("## 1.");
   const insertAt = sec1 === -1 ? content.length : sec1 + content.slice(sec1).indexOf("\n") + 1;
   writeFileSync(file, content.slice(0, insertAt) + "\n" + entry + content.slice(insertAt));
   ctx.ui.notify(`Logged ${id ?? type} to ${t.file}`, "info");
+}
+
+/**
+ * Build a memory entry using the exact per-type field formats from the
+ * user's workflow templates (templates/memory/*.md).
+ */
+function buildMemoryEntry(type: string, id: string | null, title: string, message: string): string {
+  const msg = message.replace(/\n/g, "\n  ");
+  const now = pstNow();
+  switch (type) {
+    case "err":
+      return `### [${id}] ${title}\n\n- **Symptom**: ${msg}\n- **Context/Trigger**: _What command, file, or action caused this error?_\n- **Suspected Root Cause**: _Initial assessment of why this is happening._\n\n`;
+    case "impl":
+      return `### [${id}] ${title}\n\n- **Context/Objective**: ${msg}\n- **Step-by-Step Logic Outline**:\n  1. [Step 1 description]\n  2. [Step 2 description]\n- **Dependencies Involved**: [List files, databases, or modules impacted by this flow]\n- **Status**: IN_PROGRESS\n- **Logged At**: ${now}\n\n`;
+    case "sec":
+      return `### [${id}] ${title} (SEVERITY)\n\n- **Vulnerability Rating**: [Score 0 - 10]\n- **Severity Level**: CRITICAL | HIGH | MEDIUM | LOW\n- **Attacker Exploit Methodology**: ${msg}\n- **Production-Ready Remediation Plan**: [Step-by-step fix outline]\n- **Status**: OPEN\n- **Logged At**: ${now}\n\n`;
+    case "rev":
+      return `### [${id}] ${title}\n\n- **File/Path**: _path/to/file.ext:line_number_\n- **Severity**: CRITICAL | HIGH | MEDIUM | LOW\n- **Category**: Security | Performance | Maintainability | Correctness | Testability\n- **Finding**: ${msg}\n- **Recommendation**: [Specific remediation steps or code suggestion]\n- **Status**: OPEN\n- **Reviewed At**: ${now}\n\n`;
+    case "test":
+      return `### [${id}] ${title}\n\n- **File/Path**: _path/to/test_file.ext_\n- **Type**: Unit | Integration | E2E | Performance\n- **Preconditions**: [Required setup or state before test execution]\n- **Test Input**: [Specific data or mock state required]\n- **Expected Output**: [Exact expected result or behavior]\n- **Assertions**: [Specific assertions to validate]\n- **Framework**: Vitest | Playwright\n- **Coverage Target**: [0-100%]\n- **Coverage Status**: COVERED | UNCOVERED | PARTIAL\n- **Logged At**: ${now}\n\n`;
+    default:
+      return `### [${id ?? "NOTE"}] ${title}\n\n- **Context**: ${msg}\n- **Logged At**: ${now}\n\n`;
+  }
 }
 
 function showMemory(ctx: any, type: string, opt: string): void {
@@ -742,6 +545,33 @@ function resolveMemory(ctx: any, type: string, id: string): void {
   const start = lines.findIndex((l) => l.startsWith(`### [${id}] `));
   if (start === -1) {
     ctx.ui.notify(`Entry ${id} not found in active section.`, "warning");
+    return;
+  }
+
+  // impl files have NO Section 2 (workflow format): resolve in place via Status
+  if (type === "impl") {
+    let done = false;
+    const end = (() => {
+      const n = lines.findIndex((l, i) => i > start && l.startsWith("### ["));
+      return n === -1 ? lines.length : n;
+    })();
+    for (let i = start; i < end; i++) {
+      if (lines[i].startsWith("- **Status**: ")) {
+        lines[i] = "- **Status**: COMPLETED";
+        done = true;
+        break;
+      }
+    }
+    if (!done) {
+      ctx.ui.notify(`Entry ${id} has no Status field to update.`, "warning");
+      return;
+    }
+    writeFileSync(file, lines.join("\n"));
+    ctx.ui.notify(`Resolved ${id}: Status -> COMPLETED (impl entries stay in Section 1 per workflow format).`, "info");
+    return;
+  }
+  if (type === "code" || type === "proj") {
+    ctx.ui.notify(`${type} entries follow the workflow structure and are not moved to Section 2.`, "info");
     return;
   }
   let end = lines.findIndex((l, i) => i > start && l.startsWith("### ["));
@@ -842,7 +672,15 @@ function archiveMemory(ctx: any): void {
     const withEntries =
       archiveContent.slice(0, insertAt) +
       archiveContent.slice(insertAt).replace("## Archived Entries", "## Archived Entries\n" + archived.join("\n"));
-    writeFileSync(dst, withEntries.replace(/- \*\*Last Archived At\*\*: .+/, `- **Last Archived At**: ${pstNow()}`));
+    const totalMatch = archiveContent.match(/- \*\*Total Entries Archived\*\*: (\d+)/);
+    const total = totalMatch ? parseInt(totalMatch[1], 10) + overflow : overflow;
+    writeFileSync(
+      dst,
+      withEntries
+        .replace(/- \*\*Last Archived At\*\*: .+/, `- **Last Archived At**: ${pstNow()}`)
+        .replace(/- \*\*Total Entries Archived\*\*: \d+/, `- **Total Entries Archived**: ${total}`)
+        .replace(/\(No entries archived yet\)\n?/, ""),
+    );
     writeFileSync(src, lines.join("\n"));
     moved += overflow;
     ctx.ui.notify(`[ARCHIVAL] Moved ${overflow} entries from ${file} to ${archive}`, "info");
@@ -974,13 +812,25 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         const slug = name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        let wsTemplate = "";
+        try {
+          wsTemplate = readFileSync(join(PKG_ROOT, "templates", "workspace.json"), "utf8");
+        } catch {
+          // fall back to plain JSON if template missing
+        }
         writeFileSync(
           WORKSPACE_FILE,
-          JSON.stringify(
-            { workspace_id: slug, project_name: name, initialized_at: pstNow(), initialized_by: "pi-worrie" },
-            null,
-            2,
-          ),
+          wsTemplate
+            ? wsTemplate
+                .replace("__WORRIE_SLUG__", slug)
+                .replace("__WORRIE_NAME__", name)
+                .replace("__WORRIE_AT__", pstNow())
+                .replace("__WORRIE_BY__", "pi-worrie")
+            : JSON.stringify(
+                { workspace_id: slug, project_name: name, initialized_at: pstNow(), initialized_by: "pi-worrie" },
+                null,
+                2,
+              ),
         );
         ctx.ui.notify(`WORKSPACE INITIALIZED: ${name} | ID: ${slug}`, "info");
       } else {
@@ -1018,12 +868,15 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // agent files (never overwrite existing)
+      // agent files: create missing; refresh the WORKSPACE RULES section on re-run (persona kept)
+      const rulesText = loadWorkspaceRules();
       let agents = 0;
-      for (const [file, template] of Object.entries(AGENT_TEMPLATES)) {
-        const path = join(AGENTS_DIR, file);
-        if (!existsSync(path)) {
-          writeFileSync(path, template);
+      for (const [file, spec] of Object.entries(AGENT_SPECS)) {
+        const agentPath = join(AGENTS_DIR, file);
+        if (!existsSync(agentPath)) {
+          writeFileSync(agentPath, buildAgentFile(spec as any, rulesText));
+          agents++;
+        } else if (rulesText && refreshRulesSection(agentPath, rulesText)) {
           agents++;
         }
       }

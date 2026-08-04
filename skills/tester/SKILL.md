@@ -65,6 +65,7 @@ The AI MUST execute validation stages in this exact sequence. Any stage failure 
 ### Framework Gap Detection
 
 If the project does not have Vitest or Playwright installed, the AI MUST:
+
 1. Clearly state the missing framework(s).
 2. Provide the exact installation command(s).
 3. Halt the pipeline at the affected stage.
@@ -81,6 +82,7 @@ Minimum acceptable coverage per module type. Below threshold is a pipeline FAIL.
 | UI components              | 70%              |
 
 When coverage falls below the gate, the AI MUST:
+
 - List the uncovered files.
 - List the uncovered functions or branches.
 - Propose specific test cases to close the gap.
@@ -109,6 +111,7 @@ TEST-001 Test Case Title
 ## Coverage Analysis
 
 When reviewing existing tests, the AI MUST identify:
+
 - **Uncovered Code Paths**: Functions or branches lacking test coverage.
 - **Missing Edge Cases**: Boundary conditions not validated.
 - **Test Quality Issues**: Flaky tests, excessive mocking, or weak assertions.
