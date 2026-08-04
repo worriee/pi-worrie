@@ -39,10 +39,10 @@ const SHELL_TOOLS = [...READ_ONLY_TOOLS, "subagent", "subagent_wait"];
 // Short memory type names -> file + tracking prefix (null prefix = no tracking numbers)
 const MEMORY_TYPES: Record<string, { file: string; prefix: string | null; title: string }> = {
   err: { file: "error_memory.md", prefix: "ERR", title: "Errors" },
-  code: { file: "codebase_map.md", prefix: null, title: "Codebase Map" },
+  code: { file: "codebase_map.md", prefix: "FLOW", title: "Codebase Map" },
   impl: { file: "implementation_memory.md", prefix: "FLOW", title: "Implementation" },
   sec: { file: "security_memory.md", prefix: "SEC", title: "Security" },
-  rev: { file: "review_memory.md", prefix: "REVIEW", title: "Review" },
+  rev: { file: "review_memory.md", prefix: "REV", title: "Review" },
   test: { file: "test_memory.md", prefix: "TEST", title: "Test" },
   proj: { file: join("..", "rules", "project_memory.md"), prefix: null, title: "Project" },
 };
@@ -277,14 +277,15 @@ Implement production-grade features and clean, structured code based on approved
 ## Memory Protocol (MANDATORY)
 - You may write to ANY memory file as relevant to the task:
   - \`err\` -> .pi/memory/error_memory.md (ERR-NNN)
-  - \`code\` -> .pi/memory/codebase_map.md
+  - \`code\` -> .pi/memory/codebase_map.md (FLOW-NNN)
   - \`impl\` -> .pi/memory/implementation_memory.md (FLOW-NNN)
   - \`sec\` -> .pi/memory/security_memory.md (SEC-NNN)
-  - \`rev\` -> .pi/memory/review_memory.md (REVIEW-NNN)
+  - \`rev\` -> .pi/memory/review_memory.md (REV-NNN)
   - \`test\` -> .pi/memory/test_memory.md (TEST-NNN)
   - \`proj\` -> .pi/rules/project_memory.md
 - New entries go to the TOP of Section 1 (LIFO), with format:
-  \`### [FLOW-NNN] Short Title\` followed by structured bullet fields.
+  \`### [FLOW-004] Short Title\` followed by structured bullet fields.
+- STRICT ID RULES: always square brackets + 3-digit zero-padded number ([ERR-001], [FLOW-007], [REV-012], [SEC-003], [TEST-002]). Never omit brackets, never drop padding.
 - NEVER delete, truncate, or rewrite existing entries.
 
 ## Output Contract
@@ -378,7 +379,7 @@ Return to the parent: stages completed, subagents used, memory entries written (
 
   "worrie-reviewer.md": `---
 name: worrie-reviewer
-description: Reviewer persona - structured code review, logs REVIEW findings
+description: Reviewer persona - structured code review, logs REV findings
 tools: read, grep, find, ls, bash, write, edit
 systemPromptMode: replace
 inheritProjectContext: true
@@ -395,9 +396,9 @@ Perform rigorous structured code reviews: correctness, security, performance, ma
 3. Output format per finding: file path, severity, category, finding, recommendation.
 
 ## Memory Protocol (MANDATORY)
-- Log findings to \`.pi/memory/review_memory.md\` (REVIEW-NNN):
-  - Active findings -> Section 1, LIFO top: \`### [REVIEW-NNN] Short Title\`
-  - Resolved findings -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (REVIEW-NNN)\` keeping the original number.
+- Log findings to \`.pi/memory/review_memory.md\` (REV-NNN):
+  - Active findings -> Section 1, LIFO top: \`### [REV-NNN] Short Title\`
+  - Resolved findings -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (REV-NNN)\` keeping the original number.
 - NEVER delete, truncate, or rewrite entries in Section 2.
 
 ## Output Contract

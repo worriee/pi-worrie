@@ -498,11 +498,15 @@ async function executeChain(
         choice = "Continue"; // headless: auto-continue
       } else if (ui) {
         try {
-          choice =
-            (await ui.select(
+          // only selection + Enter answers; esc/cancel just reopens the dialog
+          let picked: string | undefined;
+          do {
+            picked = await ui.select(
               `Approve stage ${stepIndex + 1}/${steps.length}?`,
               ["Continue", "Re-run previous stage", "Abort chain", "Lazy Mode (always-continue)"],
-            )) ?? "Abort chain";
+            );
+          } while (picked === undefined);
+          choice = picked;
         } catch {
           choice = "Continue";
         }
@@ -1045,13 +1049,17 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
         clearInterval(timer);
         done();
       };
-      const g = (text: string): string =>
-        theme && typeof theme.fg === "function" ? theme.fg("borderMuted", text) : text;
+      const paint = (text: string, color: string): string =>
+        theme && typeof theme.fg === "function" ? theme.fg(color, text) : text;
+      // lines = light blue, texts = yellow
+      const blue = (t: string): string => paint(t, "borderAccent");
+      const yellow = (t: string): string => paint(t, "warning");
       const pad = (text: string, content: number): string =>
-        `${g("\u2502")} ${text.slice(0, content).padEnd(content)} ${g("\u2502")}`;
+        `${blue("\u2502")} ${yellow(text.slice(0, content).padEnd(content))} ${blue("\u2502")}`;
       const edge = (label: string, content: number, bottom: boolean): string => {
         const text = label.slice(0, content - 2);
-        return g(`${bottom ? "\u2514" : "\u250c"} ${text} ${"\u2500".repeat(Math.max(1, content - text.length))}${bottom ? "\u2518" : "\u2510"}`);
+        const fill = "\u2500".repeat(Math.max(1, content - text.length));
+        return `${blue(bottom ? "\u2514 " : "\u250c ")}${yellow(text)}${blue(` ${fill}${bottom ? "\u2518" : "\u2510"}`)}`;
       };
       return {
         render(width: number): string[] {
@@ -1069,14 +1077,14 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
           for (const line of body.slice(start, start + VIEW_WINDOW)) {
             out.push(pad(line, content));
           }
-          const controls = `[${body.length - start}/${body.length}]  up/down scroll   q/esc = back to main chat`;
+          const controls = `[${body.length - start}/${body.length}]  up/down scroll   q = back to main chat`;
           out.push(edge(controls, content, true));
           return out;
         },
         handleInput(data: string): void {
           if (data === "\x1b[A") scroll = Math.max(0, scroll - 1);
           else if (data === "\x1b[B") scroll += 1;
-          else if (data === "q" || data === "Q" || data === "\x1b" || data === "\u0003") close();
+          else if (data === "q" || data === "Q") close();
         },
         invalidate(): void {
           // no cached state
