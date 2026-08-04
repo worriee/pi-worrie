@@ -70,7 +70,7 @@ interface RunResult {
 
 interface TranscriptLine {
   at: number;
-  kind: "text" | "tool" | "result" | "note" | "idea";
+  kind: "text" | "tool" | "result" | "note";
   text: string;
 }
 
@@ -82,8 +82,6 @@ interface StepState {
   finishedAt?: number;
   toolCalls: number;
   transcript: TranscriptLine[];
-  suggestions: string[];
-  sessionId?: string;
 }
 
 interface RunState {
@@ -222,22 +220,37 @@ function currentDepth(): number {
 // ===================================================================
 
 function note(step: StepState, text: string, kind: TranscriptLine["kind"] = "note"): void {
-  step.transcript.push({ at: Date.now(), kind, text });
+  const flat = text.replace(/\s+/g, " ").trim().slice(0, 240);
+  if (!flat) return;
+  step.transcript.push({ at: Date.now(), kind, text: flat });
   if (step.transcript.length > MAX_TRANSCRIPT_LINES) {
     step.transcript.splice(0, step.transcript.length - MAX_TRANSCRIPT_LINES);
   }
 }
 
-function compactArgs(args: unknown, max = 60): string {
+function compactArgs(args: unknown, max = 80): string {
   try {
-    const s = JSON.stringify(args);
+    const obj = (args ?? {}) as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v !== "string") {
+        out[k] = v;
+      } else if ((k === "content" || k === "input" || k === "args") && v.length > 40) {
+        out[k] = `${v.length} chars`;
+      } else if (v.length > 60) {
+        out[k] = v.slice(0, 60) + "...";
+      } else {
+        out[k] = v;
+      }
+    }
+    const s = JSON.stringify(out);
     return s && s.length > max ? s.slice(0, max) + "..." : s ?? "{}";
   } catch {
     return "{}";
   }
 }
 
-function compactResult(result: any, max = 140): string {
+function compactResult(result: any, max = 90): string {
   try {
     const content = result?.content;
     let text = "";
@@ -249,12 +262,11 @@ function compactResult(result: any, max = 140): string {
     } else if (typeof content === "string") {
       text = content;
     }
-    if (!text) text = JSON.stringify(result ?? {});
-    const lines = text.split("\n").filter((l) => l.trim());
-    if (lines.length > 6) return lines.slice(0, 6).join(" | ") + ` (...${lines.length} lines)`;
-    return text.slice(0, max);
+    if (!text) text = String(result ?? "");
+    text = text.replace(/\s+/g, " ").trim();
+    return text.length > max ? text.slice(0, max) + "..." : text;
   } catch {
-    return String(result ?? "").slice(0, max);
+    return "";
   }
 }
 
@@ -281,9 +293,9 @@ function attachStreamParser(
     }
     if (event.type === "tool_execution_start" && event.toolName) {
       step.toolCalls++;
-      note(step, `tool: ${event.toolName} ${compactArgs(event.args)}`, "tool");
+      note(step, `${event.toolName} ${compactArgs(event.args)}`, "tool");
     } else if (event.type === "tool_execution_end") {
-      note(step, `result: ${compactResult(event.result)}${event.isError ? " (ERROR)" : ""}`, "result");
+      note(step, `${compactResult(event.result)}${event.isError ? " (ERROR)" : ""}`, "result");
     } else if (event.type === "message_end" && event.message) {
       onMessage(event.message);
       if (event.message.role === "assistant") {
@@ -322,74 +334,16 @@ function lastAssistantText(messages: any[]): string {
   return "";
 }
 
-/**
- * Run a user-provided idea as a NEW turn in an existing child session
- * (`pi --session <id> "<idea>"`). The stored session already carries the
- * agent system prompt and prior transcript, so the idea is answered in
- * context. Streams into the same step transcript.
- */
-async function runContinuation(
-  sessionId: string,
-  idea: string,
-  cwd: string,
-  tools: string[],
-  step: StepState,
-  signal: AbortSignal | undefined,
-): Promise<{ exitCode: number; output: string; error?: string }> {
-  const args = ["--mode", "json", "-p", "--session", sessionId];
-  if (tools.length > 0) args.push("--tools", tools.join(","));
-  args.push(idea);
-
-  const invocation = getPiInvocation(args);
-  const messages: any[] = [];
-  let stderr = "";
-
-  const exitCode = await new Promise<number>((resolve) => {
-    const proc = spawn(invocation.command, invocation.args, {
-      cwd,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PI_WORRIE_DEPTH: String(currentDepth() + 1) },
-    });
-    note(step, `>> idea: ${idea.slice(0, 200)}`, "idea");
-    attachStreamParser(proc, step, () => {}, (m) => messages.push(m));
-    proc.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
-    proc.on("close", (code) => resolve(code ?? 0));
-    proc.on("error", () => resolve(1));
-    if (signal) {
-      const kill = () => {
-        try {
-          proc.kill("SIGTERM");
-        } catch {
-          // ignore
-        }
-      };
-      if (signal.aborted) kill();
-      else signal.addEventListener("abort", kill, { once: true });
-    }
-  });
-
-  const output = lastAssistantText(messages);
-  return {
-    exitCode,
-    output,
-    error: exitCode !== 0 ? (stderr || "(no stderr)").slice(0, 2000) : undefined,
-  };
-}
-
 async function runChild(
   agent: AgentConfig,
   task: string,
   cwd: string,
   run: RunState,
   step: StepState,
-  sessionId: string,
   signal: AbortSignal | undefined,
   onOutput: (text: string) => void,
 ): Promise<{ exitCode: number; output: string; error?: string }> {
-  const args = ["--mode", "json", "-p", "--session-id", sessionId];
+  const args = ["--mode", "json", "-p", "--no-session"];
   if (agent.model) args.push("--model", agent.model);
   if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
@@ -587,45 +541,30 @@ async function executeChain(
     lastStep = step.agent;
     stepState.status = "working";
     stepState.startedAt = Date.now();
-    stepState.sessionId = `worrie-${run.id}-${stepIndex + 1}`;
     note(stepState, `START ${step.agent}${step.label ? ` (${step.label})` : ""}`);
     const task = step.task.replace(/\{previous\}/g, previous);
     refreshWidget(ui);
 
-    const result = await runChild(agent, task, step.cwd ?? cwd, run, stepState, stepState.sessionId, signal, (text) => {
+    const result = await runChild(agent, task, step.cwd ?? cwd, run, stepState, signal, (text) => {
       run.latestText = text;
     });
-
-    // drain queued suggestions as continuation turns on the child session
-    let output = result.output;
-    if (result.exitCode === 0 && stepState.suggestions.length > 0) {
-      for (const idea of stepState.suggestions) {
-        note(stepState, `>> applying queued suggestion: ${idea.slice(0, 120)}`, "idea");
-        const cont = await runContinuation(stepState.sessionId, idea, step.cwd ?? cwd, agent.tools, stepState, signal);
-        if (cont.exitCode === 0 && cont.output) {
-          output += `\n\n[Applied suggestion: ${idea.slice(0, 80)}]\n${cont.output}`;
-        } else {
-          output += `\n\n[Queued suggestion failed to apply: ${idea.slice(0, 80)}]`;
-        }
-      }
-    }
     stepState.status = result.exitCode === 0 ? "done" : "failed";
     stepState.finishedAt = Date.now();
 
-    const summary = output.slice(0, 400);
+    const summary = result.output.slice(0, 400);
     run.results.push({
       agent: step.agent,
       source: agent.source,
       task: step.task,
       label: step.label,
       exitCode: result.exitCode,
-      output,
+      output: result.output,
       error: result.error,
       step: stepIndex + 1,
     });
-    previous = Buffer.byteLength(output, "utf8") > MAX_PREVIOUS_BYTES
-      ? `${output.slice(0, MAX_PREVIOUS_BYTES)}\n\n[Previous output truncated]`
-      : output;
+    previous = Buffer.byteLength(result.output, "utf8") > MAX_PREVIOUS_BYTES
+      ? `${result.output.slice(0, MAX_PREVIOUS_BYTES)}\n\n[Previous output truncated]`
+      : result.output;
 
     if (result.exitCode !== 0) {
       run.status = "failed";
@@ -688,9 +627,8 @@ async function executeParallel(
       }
       stepState.status = "working";
       stepState.startedAt = Date.now();
-      stepState.sessionId = `worrie-${run.id}-${idx + 1}`;
       note(stepState, `START ${t.agent}`);
-      const r = await runChild(agent, t.task, t.cwd ?? cwd, run, stepState, stepState.sessionId, signal, (text) => {
+      const r = await runChild(agent, t.task, t.cwd ?? cwd, run, stepState, signal, (text) => {
         run.latestText = text;
       });
       stepState.status = r.exitCode === 0 ? "done" : "failed";
@@ -911,13 +849,11 @@ export default function (pi: ExtensionAPI) {
               startedAt: Date.now(),
               toolCalls: 0,
               transcript: [],
-              suggestions: [],
-              sessionId: `worrie-${run.id}-1`,
             },
           ];
           const stepState = run.steps[0];
           note(stepState, `START ${agent.name}`);
-          const r = await runChild(agent, params.task!, cwd, run, stepState, stepState.sessionId!, signal, (text) => {
+          const r = await runChild(agent, params.task!, cwd, run, stepState, signal, (text) => {
             run.latestText = text;
           });
           stepState.status = r.exitCode === 0 ? "done" : "failed";
@@ -1051,7 +987,6 @@ export default function (pi: ExtensionAPI) {
             status: (r.status === "aborted" ? "failed" : r.status) as StepState["status"],
             toolCalls: 0,
             transcript: [],
-            suggestions: [],
           };
           list.push(`${r.id}  ${s.agent} | ${s.status}`);
           targets.push({ run: r, step: s });
@@ -1066,18 +1001,8 @@ export default function (pi: ExtensionAPI) {
       const target = targets.find((t) => t.run.id === id && t.step === run.steps[Number(stepNum) - 1]) ?? targets.find((t) => t.run.id === id);
       if (!target) return;
 
-      // view loop: view -> suggest -> view again until user exits
-      while (true) {
-        const result = await openSubagentView(ctx.ui, target.run, target.step);
-        if (result !== "suggest") break;
-        const idea = await ctx.ui.input(`Idea for ${target.step.agent}:`, "");
-        if (!idea || !idea.trim()) break;
-        target.step.suggestions.push(idea.trim());
-        note(target.step, `>> suggestion queued: ${idea.trim().slice(0, 200)}`, "idea");
-        if (target.run.status !== "running") {
-          ctx.ui.notify(`Idea queued for finished run ${target.run.id}. It applies only to a running stage.`, "warning");
-        }
-      }
+      // view only: read the raw log, then q/esc back to main chat
+      await openSubagentView(ctx.ui, target.run, target.step);
     },
   });
 }
@@ -1088,10 +1013,9 @@ export default function (pi: ExtensionAPI) {
 
 const VIEW_WINDOW = 24;
 
-function transcriptLine(step: StepState, line: TranscriptLine): string {
+function transcriptLine(line: TranscriptLine): string {
   const time = new Date(line.at).toLocaleTimeString("en-US", { hour12: false });
-  const tag = line.kind === "tool" ? "tool" : line.kind === "result" ? "result" : line.kind === "idea" ? "idea" : line.kind === "text" ? "  " : "---";
-  return `[${time}] ${tag} ${line.text}`;
+  return `[${time}] ${line.text}`;
 }
 
 /**
@@ -1107,38 +1031,45 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
   }
   let scroll = 0;
   return ui.custom(
-    (tui: any, _theme: any, _kb: any, done: (r?: string) => void) => {
+    (tui: any, _theme: any, _kb: any, done: () => void) => {
       let disposed = false;
       const timer = setInterval(() => {
         if (!disposed) tui.requestRender();
       }, 400);
-      const close = (r?: string) => {
+      const close = () => {
         disposed = true;
         clearInterval(timer);
-        done(r);
+        done();
+      };
+      const pad = (text: string, content: number): string => `\u2502 ${text.slice(0, content).padEnd(content)} \u2502`;
+      const edge = (label: string, content: number, bottom: boolean): string => {
+        const text = label.slice(0, content - 2);
+        return `${bottom ? "\u2514" : "\u250c"} ${text} ${"\u2500".repeat(Math.max(1, content - text.length))}${bottom ? "\u2518" : "\u2510"}`;
       };
       return {
         render(width: number): string[] {
+          const w = Math.max(30, width);
+          const content = w - 4;
           const stepNum = run.steps.indexOf(step) + 1;
-          const header = `${step.agent} | ${step.status} | ${run.id}${run.steps.length > 1 ? ` step ${stepNum}/${run.steps.length}` : ""} | toolcalls ${step.toolCalls}`;
-          const status = run.mode === "chain" ? `chain ${run.currentStep ?? 1}/${run.totalSteps ?? 1} ${run.status}` : `${run.mode} ${run.status}`;
-          const out: string[] = [header, status, "-".repeat(Math.min(width, 60))];
-          const body = step.transcript.map((l) => transcriptLine(step, l));
+          const stepInfo = run.steps.length > 1 ? ` | step ${stepNum}/${run.steps.length}` : "";
+          const title = `SUBAGENT VIEW: ${step.agent} | ${step.status}${stepInfo} | toolcalls ${step.toolCalls}`;
+          const body = step.transcript.map((l) => transcriptLine(l));
           const maxScroll = Math.max(0, body.length - VIEW_WINDOW);
           if (scroll > maxScroll) scroll = maxScroll;
           const start = Math.max(0, body.length - VIEW_WINDOW - scroll);
+          const out: string[] = [];
+          out.push(edge(title, content, false));
           for (const line of body.slice(start, start + VIEW_WINDOW)) {
-            out.push(line.length > width ? line.slice(0, width - 1) : line);
+            out.push(pad(line, content));
           }
-          out.push("-".repeat(Math.min(width, 60)));
-          out.push(`[${body.length - start}/${body.length}]  up/down scroll  i = suggest idea  q/esc = exit to main chat`);
+          const controls = `[${body.length - start}/${body.length}]  up/down scroll   q/esc = back to main chat`;
+          out.push(edge(controls, content, true));
           return out;
         },
         handleInput(data: string): void {
           if (data === "\x1b[A") scroll = Math.max(0, scroll - 1);
           else if (data === "\x1b[B") scroll += 1;
-          else if (data === "i" || data === "I") close("suggest");
-          else if (data === "q" || data === "Q" || data === "\x1b" || data === "\u0003") close(undefined);
+          else if (data === "q" || data === "Q" || data === "\x1b" || data === "\u0003") close();
         },
         invalidate(): void {
           // no cached state
