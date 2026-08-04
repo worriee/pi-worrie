@@ -96,6 +96,7 @@ interface RunState {
   totalSteps?: number;
   latestText: string;
   children: Set<ChildProcess>;
+  lazyMode?: boolean;
   completion?: Promise<void>;
   resolveCompletion?: () => void;
 }
@@ -487,8 +488,8 @@ async function executeChain(
       return;
     }
 
-    // approval gate BEFORE running this step (skip for step 1)
-    if (step.approval && stepIndex > 0) {
+    // approval gate BEFORE running this step (skip for step 1; skipped in lazy mode)
+    if (step.approval && stepIndex > 0 && !run.lazyMode) {
       run.status = "waiting-approval";
       stepState.status = "waiting-approval";
       refreshWidget(ui);
@@ -500,7 +501,7 @@ async function executeChain(
           choice =
             (await ui.select(
               `Approve stage ${stepIndex + 1}/${steps.length}?`,
-              ["Continue", "Re-run previous stage", "Abort chain"],
+              ["Continue", "Re-run previous stage", "Abort chain", "Lazy Mode (always-continue)"],
             )) ?? "Abort chain";
         } catch {
           choice = "Continue";
@@ -510,7 +511,10 @@ async function executeChain(
       stepState.status = "working";
       refreshWidget(ui);
 
-      if (choice === "Abort chain") {
+      if (choice === "Lazy Mode (always-continue)") {
+        run.lazyMode = true;
+        ui?.notify("Lazy mode ON: remaining stages auto-continue.", "info");
+      } else if (choice === "Abort chain") {
         run.status = "aborted";
         stepState.status = "failed";
         finishRun(run, ui);
@@ -1031,7 +1035,7 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
   }
   let scroll = 0;
   return ui.custom(
-    (tui: any, _theme: any, _kb: any, done: () => void) => {
+    (tui: any, theme: any, _kb: any, done: () => void) => {
       let disposed = false;
       const timer = setInterval(() => {
         if (!disposed) tui.requestRender();
@@ -1041,10 +1045,13 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
         clearInterval(timer);
         done();
       };
-      const pad = (text: string, content: number): string => `\u2502 ${text.slice(0, content).padEnd(content)} \u2502`;
+      const g = (text: string): string =>
+        theme && typeof theme.fg === "function" ? theme.fg("borderMuted", text) : text;
+      const pad = (text: string, content: number): string =>
+        `${g("\u2502")} ${text.slice(0, content).padEnd(content)} ${g("\u2502")}`;
       const edge = (label: string, content: number, bottom: boolean): string => {
         const text = label.slice(0, content - 2);
-        return `${bottom ? "\u2514" : "\u250c"} ${text} ${"\u2500".repeat(Math.max(1, content - text.length))}${bottom ? "\u2518" : "\u2510"}`;
+        return g(`${bottom ? "\u2514" : "\u250c"} ${text} ${"\u2500".repeat(Math.max(1, content - text.length))}${bottom ? "\u2518" : "\u2510"}`);
       };
       return {
         render(width: number): string[] {
@@ -1052,7 +1059,7 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
           const content = w - 4;
           const stepNum = run.steps.indexOf(step) + 1;
           const stepInfo = run.steps.length > 1 ? ` | step ${stepNum}/${run.steps.length}` : "";
-          const title = `SUBAGENT VIEW: ${step.agent} | ${step.status}${stepInfo} | toolcalls ${step.toolCalls}`;
+          const title = `SUBAGENT: ${step.agent} | ${step.status}${stepInfo} | toolcalls ${step.toolCalls}`;
           const body = step.transcript.map((l) => transcriptLine(l));
           const maxScroll = Math.max(0, body.length - VIEW_WINDOW);
           if (scroll > maxScroll) scroll = maxScroll;
