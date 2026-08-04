@@ -19,7 +19,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import {
+  CONFIG_DIR_NAME,
+  getAgentDir,
+  parseFrontmatter,
+} from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
@@ -113,7 +117,10 @@ let sessionTrusted = false;
 // Agent discovery
 // ===================================================================
 
-function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
+function loadAgentsFromDir(
+  dir: string,
+  source: "user" | "project",
+): AgentConfig[] {
   const agents: AgentConfig[] = [];
   if (!fs.existsSync(dir)) return agents;
   let entries: fs.Dirent[];
@@ -131,7 +138,8 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
     } catch {
       continue;
     }
-    const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
+    const { frontmatter, body } =
+      parseFrontmatter<Record<string, string>>(content);
     if (!frontmatter.name || !frontmatter.description) continue;
     const tools = (frontmatter.tools ?? "")
       .split(",")
@@ -153,20 +161,25 @@ function findProjectAgentsDir(cwd: string): string | null {
   let current = cwd;
   while (true) {
     const candidate = path.join(current, CONFIG_DIR_NAME, "agents");
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate;
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory())
+      return candidate;
     const parent = path.dirname(current);
     if (parent === current) return null;
     current = parent;
   }
 }
 
-function discoverAgents(cwd: string): { agents: AgentConfig[]; projectDir: string | null } {
+function discoverAgents(cwd: string): {
+  agents: AgentConfig[];
+  projectDir: string | null;
+} {
   const projectDir = findProjectAgentsDir(cwd);
   const userDir = path.join(getAgentDir(), "agents");
   const map = new Map<string, AgentConfig>();
   for (const a of loadAgentsFromDir(userDir, "user")) map.set(a.name, a);
   if (projectDir) {
-    for (const a of loadAgentsFromDir(projectDir, "project")) map.set(a.name, a);
+    for (const a of loadAgentsFromDir(projectDir, "project"))
+      map.set(a.name, a);
   }
   return { agents: Array.from(map.values()), projectDir };
 }
@@ -177,7 +190,9 @@ function discoverAgents(cwd: string): { agents: AgentConfig[]; projectDir: strin
 
 function trustAlways(): boolean {
   try {
-    const data = JSON.parse(fs.readFileSync(path.join(process.cwd(), TRUST_FILE), "utf8"));
+    const data = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), TRUST_FILE), "utf8"),
+    );
     return data.mode === "always";
   } catch {
     return false;
@@ -187,7 +202,10 @@ function trustAlways(): boolean {
 function writeTrustAlways(): void {
   try {
     fs.mkdirSync(path.join(process.cwd(), ".pi"), { recursive: true });
-    fs.writeFileSync(path.join(process.cwd(), TRUST_FILE), JSON.stringify({ mode: "always" }, null, 2));
+    fs.writeFileSync(
+      path.join(process.cwd(), TRUST_FILE),
+      JSON.stringify({ mode: "always" }, null, 2),
+    );
   } catch {
     // best effort
   }
@@ -220,7 +238,11 @@ function currentDepth(): number {
 // Transcript + stream parsing
 // ===================================================================
 
-function note(step: StepState, text: string, kind: TranscriptLine["kind"] = "note"): void {
+function note(
+  step: StepState,
+  text: string,
+  kind: TranscriptLine["kind"] = "note",
+): void {
   const flat = text.replace(/\s+/g, " ").trim().slice(0, 240);
   if (!flat) return;
   step.transcript.push({ at: Date.now(), kind, text: flat });
@@ -236,7 +258,10 @@ function compactArgs(args: unknown, max = 80): string {
     for (const [k, v] of Object.entries(obj)) {
       if (typeof v !== "string") {
         out[k] = v;
-      } else if ((k === "content" || k === "input" || k === "args") && v.length > 40) {
+      } else if (
+        (k === "content" || k === "input" || k === "args") &&
+        v.length > 40
+      ) {
         out[k] = `${v.length} chars`;
       } else if (v.length > 60) {
         out[k] = v.slice(0, 60) + "...";
@@ -245,7 +270,7 @@ function compactArgs(args: unknown, max = 80): string {
       }
     }
     const s = JSON.stringify(out);
-    return s && s.length > max ? s.slice(0, max) + "..." : s ?? "{}";
+    return s && s.length > max ? s.slice(0, max) + "..." : (s ?? "{}");
   } catch {
     return "{}";
   }
@@ -257,7 +282,7 @@ function compactResult(result: any, max = 90): string {
     let text = "";
     if (Array.isArray(content)) {
       text = content
-        .map((c) => (typeof c === "string" ? c : c?.text ?? ""))
+        .map((c) => (typeof c === "string" ? c : (c?.text ?? "")))
         .join(" ")
         .trim();
     } else if (typeof content === "string") {
@@ -296,7 +321,11 @@ function attachStreamParser(
       step.toolCalls++;
       note(step, `${event.toolName} ${compactArgs(event.args)}`, "tool");
     } else if (event.type === "tool_execution_end") {
-      note(step, `${compactResult(event.result)}${event.isError ? " (ERROR)" : ""}`, "result");
+      note(
+        step,
+        `${compactResult(event.result)}${event.isError ? " (ERROR)" : ""}`,
+        "result",
+      );
     } else if (event.type === "message_end" && event.message) {
       onMessage(event.message);
       if (event.message.role === "assistant") {
@@ -352,9 +381,14 @@ async function runChild(
   const systemPrompt = `${agent.systemPrompt}\n\nTask: ${taskPrompt}`;
 
   // system prompt via temp file
-  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-worrie-sub-"));
+  const tmpDir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "pi-worrie-sub-"),
+  );
   const tmpFile = path.join(tmpDir, "prompt.md");
-  await fs.promises.writeFile(tmpFile, systemPrompt, { encoding: "utf-8", mode: 0o600 });
+  await fs.promises.writeFile(tmpFile, systemPrompt, {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
   args.push("--append-system-prompt", tmpFile);
   args.push(`Task: ${task}`);
 
@@ -372,7 +406,12 @@ async function runChild(
       });
       run.children.add(proc);
 
-      attachStreamParser(proc, step, (text) => onOutput(text), (m) => messages.push(m));
+      attachStreamParser(
+        proc,
+        step,
+        (text) => onOutput(text),
+        (m) => messages.push(m),
+      );
       proc.stderr.on("data", (data) => {
         stderr += data.toString();
       });
@@ -396,10 +435,16 @@ async function runChild(
 
     // final output = last assistant text
     const finalText = lastAssistantText(messages);
-    const output = Buffer.byteLength(finalText, "utf8") > MAX_OUTPUT_BYTES
-      ? `${finalText.slice(0, MAX_OUTPUT_BYTES)}\n\n[Output truncated]`
-      : finalText;
-    return { exitCode, output, error: exitCode !== 0 ? (stderr || "(no stderr)").slice(0, 2000) : undefined };
+    const output =
+      Buffer.byteLength(finalText, "utf8") > MAX_OUTPUT_BYTES
+        ? `${finalText.slice(0, MAX_OUTPUT_BYTES)}\n\n[Output truncated]`
+        : finalText;
+    return {
+      exitCode,
+      output,
+      error:
+        exitCode !== 0 ? (stderr || "(no stderr)").slice(0, 2000) : undefined,
+    };
   } finally {
     try {
       fs.unlinkSync(tmpFile);
@@ -418,13 +463,16 @@ function widgetLine(run: RunState): string {
   const total = run.totalSteps ?? 1;
   const step = run.currentStep ?? 1;
   const idx = run.mode === "single" ? "" : `[${step}/${total}] `;
-  if (run.status === "waiting-approval") return `${idx}Waiting approval (${run.agent})`;
+  if (run.status === "waiting-approval")
+    return `${idx}Waiting approval (${run.agent})`;
   if (run.status === "done") return `${idx}Done (${run.agent})`;
   return `${idx}Running ${run.agent}...`;
 }
 
 function refreshWidget(ui: any): void {
-  const active = Array.from(runs.values()).filter((r) => r.status === "running" || r.status === "waiting-approval");
+  const active = Array.from(runs.values()).filter(
+    (r) => r.status === "running" || r.status === "waiting-approval",
+  );
   if (active.length === 0) {
     ui?.setWidget("worrie-subagents", undefined);
     return;
@@ -503,7 +551,12 @@ async function executeChain(
           do {
             picked = await ui.select(
               `Approve stage ${stepIndex + 1}/${steps.length}?`,
-              ["Continue", "Re-run previous stage", "Abort chain", "Lazy Mode (always-continue)"],
+              [
+                "Continue",
+                "Re-run previous stage",
+                "Abort chain",
+                "Lazy Mode (always-continue)",
+              ],
             );
           } while (picked === undefined);
           choice = picked;
@@ -549,13 +602,24 @@ async function executeChain(
     lastStep = step.agent;
     stepState.status = "working";
     stepState.startedAt = Date.now();
-    note(stepState, `START ${step.agent}${step.label ? ` (${step.label})` : ""}`);
+    note(
+      stepState,
+      `START ${step.agent}${step.label ? ` (${step.label})` : ""}`,
+    );
     const task = step.task.replace(/\{previous\}/g, previous);
     refreshWidget(ui);
 
-    const result = await runChild(agent, task, step.cwd ?? cwd, run, stepState, signal, (text) => {
-      run.latestText = text;
-    });
+    const result = await runChild(
+      agent,
+      task,
+      step.cwd ?? cwd,
+      run,
+      stepState,
+      signal,
+      (text) => {
+        run.latestText = text;
+      },
+    );
     stepState.status = result.exitCode === 0 ? "done" : "failed";
     stepState.finishedAt = Date.now();
 
@@ -570,18 +634,22 @@ async function executeChain(
       error: result.error,
       step: stepIndex + 1,
     });
-    previous = Buffer.byteLength(result.output, "utf8") > MAX_PREVIOUS_BYTES
-      ? `${result.output.slice(0, MAX_PREVIOUS_BYTES)}\n\n[Previous output truncated]`
-      : result.output;
+    previous =
+      Buffer.byteLength(result.output, "utf8") > MAX_PREVIOUS_BYTES
+        ? `${result.output.slice(0, MAX_PREVIOUS_BYTES)}\n\n[Previous output truncated]`
+        : result.output;
 
     if (result.exitCode !== 0) {
       run.status = "failed";
-      ui?.notify(`Chain step ${stepIndex + 1} (${step.agent}) failed: ${result.error ?? "unknown error"}`, "error");
+      ui?.notify(
+        `Chain step ${stepIndex + 1} (${step.agent}) failed: ${result.error ?? "unknown error"}`,
+        "error",
+      );
       finishRun(run, ui);
       return;
     }
 
-    ui?.notify(`Step ${stepIndex + 1}/${steps.length} ${step.agent} done. ${summary.split("\n")[0]}`, "info");
+    ui?.notify(`${step.agent} done. ${summary.split("\n")[0]}`, "info");
     stepIndex++;
   }
 
@@ -611,47 +679,57 @@ async function executeParallel(
   }));
   const results: RunResult[] = new Array(tasks.length);
   let nextIndex = 0;
-  const workers = new Array(Math.min(MAX_CONCURRENCY, tasks.length)).fill(null).map(async () => {
-    while (true) {
-      const idx = nextIndex++;
-      if (idx >= tasks.length) return;
-      const t = tasks[idx];
-      const stepState = run.steps[idx];
-      const agent = agents.find((a) => a.name === t.agent);
-      run.agent = t.agent;
-      run.currentStep = idx + 1;
-      refreshWidget(ui);
-      if (!agent) {
-        stepState.status = "failed";
+  const workers = new Array(Math.min(MAX_CONCURRENCY, tasks.length))
+    .fill(null)
+    .map(async () => {
+      while (true) {
+        const idx = nextIndex++;
+        if (idx >= tasks.length) return;
+        const t = tasks[idx];
+        const stepState = run.steps[idx];
+        const agent = agents.find((a) => a.name === t.agent);
+        run.agent = t.agent;
+        run.currentStep = idx + 1;
+        refreshWidget(ui);
+        if (!agent) {
+          stepState.status = "failed";
+          results[idx] = {
+            agent: t.agent,
+            source: "unknown",
+            task: t.task,
+            exitCode: 1,
+            output: "",
+            error: `Unknown agent "${t.agent}". Available: ${agents.map((a) => a.name).join(", ") || "none"}`,
+          };
+          continue;
+        }
+        stepState.status = "working";
+        stepState.startedAt = Date.now();
+        note(stepState, `START ${t.agent}`);
+        const r = await runChild(
+          agent,
+          t.task,
+          t.cwd ?? cwd,
+          run,
+          stepState,
+          signal,
+          (text) => {
+            run.latestText = text;
+          },
+        );
+        stepState.status = r.exitCode === 0 ? "done" : "failed";
+        stepState.finishedAt = Date.now();
         results[idx] = {
           agent: t.agent,
-          source: "unknown",
+          source: agent.source,
           task: t.task,
-          exitCode: 1,
-          output: "",
-          error: `Unknown agent "${t.agent}". Available: ${agents.map((a) => a.name).join(", ") || "none"}`,
+          exitCode: r.exitCode,
+          output: r.output,
+          error: r.error,
         };
-        continue;
+        refreshWidget(ui);
       }
-      stepState.status = "working";
-      stepState.startedAt = Date.now();
-      note(stepState, `START ${t.agent}`);
-      const r = await runChild(agent, t.task, t.cwd ?? cwd, run, stepState, signal, (text) => {
-        run.latestText = text;
-      });
-      stepState.status = r.exitCode === 0 ? "done" : "failed";
-      stepState.finishedAt = Date.now();
-      results[idx] = {
-        agent: t.agent,
-        source: agent.source,
-        task: t.task,
-        exitCode: r.exitCode,
-        output: r.output,
-        error: r.error,
-      };
-      refreshWidget(ui);
-    }
-  });
+    });
   await Promise.all(workers);
   run.results = results;
   run.status = results.some((r) => r.exitCode !== 0) ? "failed" : "done";
@@ -665,7 +743,9 @@ async function executeParallel(
 function buildResultContent(run: RunState): string {
   if (run.mode === "single") {
     const r = run.results[0];
-    return r?.error ? `Agent ${r.agent} failed: ${r.error}` : (r?.output || "(no output)");
+    return r?.error
+      ? `Agent ${r.agent} failed: ${r.error}`
+      : r?.output || "(no output)";
   }
   if (run.mode === "parallel") {
     const parts = run.results.map((r) => {
@@ -722,8 +802,12 @@ export default function (pi: ExtensionAPI) {
       "Agents live in project .pi/agents or user agents dir.",
     ].join(" "),
     parameters: Type.Object({
-      agent: Type.Optional(Type.String({ description: "Agent name (single mode)" })),
-      task: Type.Optional(Type.String({ description: "Task for the agent (single mode)" })),
+      agent: Type.Optional(
+        Type.String({ description: "Agent name (single mode)" }),
+      ),
+      task: Type.Optional(
+        Type.String({ description: "Task for the agent (single mode)" }),
+      ),
       tasks: Type.Optional(
         Type.Array(
           Type.Object({
@@ -739,14 +823,22 @@ export default function (pi: ExtensionAPI) {
           Type.Object({
             agent: Type.String(),
             task: Type.String(),
-            approval: Type.Optional(Type.Boolean({ description: "Pause for user approval before this step" })),
-            label: Type.Optional(Type.String({ description: "Step label, e.g. '3/11: TEST'" })),
+            approval: Type.Optional(
+              Type.Boolean({
+                description: "Pause for user approval before this step",
+              }),
+            ),
+            label: Type.Optional(
+              Type.String({ description: "Step label, e.g. '3/11: TEST'" }),
+            ),
             cwd: Type.Optional(Type.String()),
           }),
           { description: "Sequential chain steps" },
         ),
       ),
-      async: Type.Optional(Type.Boolean({ description: "Run in background, return immediately" })),
+      async: Type.Optional(
+        Type.Boolean({ description: "Run in background, return immediately" }),
+      ),
       cwd: Type.Optional(Type.String()),
     }),
 
@@ -776,31 +868,41 @@ export default function (pi: ExtensionAPI) {
       // depth guard
       if (currentDepth() >= MAX_DEPTH) {
         return {
-          content: [{ type: "text", text: `Max subagent depth (${MAX_DEPTH}) reached. Refusing to spawn deeper.` }],
+          content: [
+            {
+              type: "text",
+              text: `Max subagent depth (${MAX_DEPTH}) reached. Refusing to spawn deeper.`,
+            },
+          ],
           details: {},
         };
       }
 
       // trust gate for project agents
       const requestedNames = new Set<string>();
-      if (params.chain) for (const s of params.chain) requestedNames.add(s.agent);
-      if (params.tasks) for (const t of params.tasks) requestedNames.add(t.agent);
+      if (params.chain)
+        for (const s of params.chain) requestedNames.add(s.agent);
+      if (params.tasks)
+        for (const t of params.tasks) requestedNames.add(t.agent);
       if (params.agent) requestedNames.add(params.agent);
-      const usesProjectAgents = Array.from(requestedNames).some((n) =>
-        agents.find((a) => a.name === n)?.source === "project",
+      const usesProjectAgents = Array.from(requestedNames).some(
+        (n) => agents.find((a) => a.name === n)?.source === "project",
       );
       if (usesProjectAgents && discovery.projectDir && !sessionTrusted) {
         let choice = "Cancel";
         if (ctx.hasUI) {
           choice =
-            (await ctx.ui.select(
-              "Run project agents?",
-              ["Trust once (this session)", "Trust always (this project)", "Cancel"],
-            )) ?? "Cancel";
+            (await ctx.ui.select("Run project agents?", [
+              "Trust once (this session)",
+              "Trust always (this project)",
+              "Cancel",
+            ])) ?? "Cancel";
         }
         if (choice === "Cancel") {
           return {
-            content: [{ type: "text", text: "Canceled: project agents not approved." }],
+            content: [
+              { type: "text", text: "Canceled: project agents not approved." },
+            ],
             details: {},
           };
         }
@@ -817,7 +919,11 @@ export default function (pi: ExtensionAPI) {
         id,
         mode,
         status: "running",
-        agent: hasChain ? (params.chain![0]?.agent ?? "chain") : hasTasks ? "parallel" : params.agent!,
+        agent: hasChain
+          ? (params.chain![0]?.agent ?? "chain")
+          : hasTasks
+            ? "parallel"
+            : params.agent!,
         startedAt: Date.now(),
         results: [],
         steps: [],
@@ -861,9 +967,17 @@ export default function (pi: ExtensionAPI) {
           ];
           const stepState = run.steps[0];
           note(stepState, `START ${agent.name}`);
-          const r = await runChild(agent, params.task!, cwd, run, stepState, signal, (text) => {
-            run.latestText = text;
-          });
+          const r = await runChild(
+            agent,
+            params.task!,
+            cwd,
+            run,
+            stepState,
+            signal,
+            (text) => {
+              run.latestText = text;
+            },
+          );
           stepState.status = r.exitCode === 0 ? "done" : "failed";
           stepState.finishedAt = Date.now();
           run.results.push({
@@ -877,13 +991,17 @@ export default function (pi: ExtensionAPI) {
           run.status = r.exitCode === 0 ? "done" : "failed";
           finishRun(run, ui);
           if (r.exitCode !== 0) {
-            ui?.notify(`Subagent ${agent.name} failed: ${r.error ?? "unknown error"}`, "error");
+            ui?.notify(
+              `Subagent ${agent.name} failed: ${r.error ?? "unknown error"}`,
+              "error",
+            );
           }
         }
         if (run.status === "done") {
-          const summary = run.mode === "single"
-            ? run.results[0]?.output.split("\n")[0] ?? ""
-            : `chain/parallel done (${run.results.filter((r) => r.exitCode === 0).length}/${run.results.length} ok)`;
+          const summary =
+            run.mode === "single"
+              ? (run.results[0]?.output.split("\n")[0] ?? "")
+              : `chain/parallel done (${run.results.filter((r) => r.exitCode === 0).length}/${run.results.length} ok)`;
           ui?.notify(`Subagent done: ${summary.slice(0, 120)}`, "info");
         }
       };
@@ -892,7 +1010,14 @@ export default function (pi: ExtensionAPI) {
         // background: fire and forget, return run id
         void start().catch((err) => {
           run.status = "failed";
-          run.results.push({ agent: run.agent, source: "unknown", task: "", exitCode: 1, output: "", error: String(err) });
+          run.results.push({
+            agent: run.agent,
+            source: "unknown",
+            task: "",
+            exitCode: 1,
+            output: "",
+            error: String(err),
+          });
           finishRun(run, ui);
         });
         return {
@@ -930,27 +1055,54 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent_wait",
     label: "Subagent Wait",
-    description: "Wait for a background subagent run to finish. Omit id to wait for all active runs. Use timeoutMs to cap the wait.",
+    description:
+      "Wait for a background subagent run to finish. Omit id to wait for all active runs. Use timeoutMs to cap the wait.",
     parameters: Type.Object({
-      id: Type.Optional(Type.String({ description: "Run id from a subagent async call" })),
-      timeoutMs: Type.Optional(Type.Integer({ description: "Max wait time in ms (default 300000)" })),
+      id: Type.Optional(
+        Type.String({ description: "Run id from a subagent async call" }),
+      ),
+      timeoutMs: Type.Optional(
+        Type.Integer({ description: "Max wait time in ms (default 300000)" }),
+      ),
     }),
     async execute(_toolCallId, params) {
       const timeoutMs = params.timeoutMs ?? 300_000;
       if (runs.size === 0) {
-        return { content: [{ type: "text", text: "No subagent runs active." }], details: {} };
+        return {
+          content: [{ type: "text", text: "No subagent runs active." }],
+          details: {},
+        };
       }
       const targets = params.id
-        ? (runs.get(params.id) ? [runs.get(params.id)!] : [])
-        : Array.from(runs.values()).filter((r) => r.status === "running" || r.status === "waiting-approval");
+        ? runs.get(params.id)
+          ? [runs.get(params.id)!]
+          : []
+        : Array.from(runs.values()).filter(
+            (r) => r.status === "running" || r.status === "waiting-approval",
+          );
       if (targets.length === 0) {
         const r = params.id ? runs.get(params.id) : undefined;
         if (r) {
-          return { content: [{ type: "text", text: `Run ${params.id} already finished (${r.status}).` }], details: {} };
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Run ${params.id} already finished (${r.status}).`,
+              },
+            ],
+            details: {},
+          };
         }
-        return { content: [{ type: "text", text: `Run ${params.id ?? "(none)"} not found.` }], details: {} };
+        return {
+          content: [
+            { type: "text", text: `Run ${params.id ?? "(none)"} not found.` },
+          ],
+          details: {},
+        };
       }
-      const wait = Promise.all(targets.map((t) => t.completion ?? Promise.resolve()));
+      const wait = Promise.all(
+        targets.map((t) => t.completion ?? Promise.resolve()),
+      );
       let timer: NodeJS.Timeout | undefined;
       const timeout = new Promise<void>((resolve) => {
         timer = setTimeout(resolve, timeoutMs);
@@ -958,13 +1110,17 @@ export default function (pi: ExtensionAPI) {
       await Promise.race([wait, timeout]);
       if (timer) clearTimeout(timer);
       const results = targets.map((t) => `${t.id} ${t.agent} ${t.status}`);
-      return { content: [{ type: "text", text: results.join("\n") }], details: {} };
+      return {
+        content: [{ type: "text", text: results.join("\n") }],
+        details: {},
+      };
     },
   });
 
   // ── /subagents monitor ──
   pi.registerCommand("subagents", {
-    description: "List subagents (per stage), open a live raw view, suggest ideas",
+    description:
+      "List subagents (per stage), open a live raw view, suggest ideas",
     getArgumentCompletions: (prefix: string) => {
       const text = (prefix ?? "").trim();
       const items = Array.from(runs.values()).map((r) => ({
@@ -992,7 +1148,9 @@ export default function (pi: ExtensionAPI) {
         } else {
           const s = r.steps[0] ?? {
             agent: r.agent,
-            status: (r.status === "aborted" ? "failed" : r.status) as StepState["status"],
+            status: (r.status === "aborted"
+              ? "failed"
+              : r.status) as StepState["status"],
             toolCalls: 0,
             transcript: [],
           };
@@ -1006,11 +1164,14 @@ export default function (pi: ExtensionAPI) {
       const [id, stepNum] = line.includes(":") ? line.split(":") : [line, "1"];
       const run = runs.get(id);
       if (!run) return;
-      const target = targets.find((t) => t.run.id === id && t.step === run.steps[Number(stepNum) - 1]) ?? targets.find((t) => t.run.id === id);
+      const target =
+        targets.find(
+          (t) => t.run.id === id && t.step === run.steps[Number(stepNum) - 1],
+        ) ?? targets.find((t) => t.run.id === id);
       if (!target) return;
 
-      // view only: read the raw log, then q/esc back to main chat
-      await openSubagentView(ctx.ui, target.run, target.step);
+      // view only: read the raw log, left/right switches subagent, q back to main chat
+      await openSubagentView(ctx.ui, targets, targets.indexOf(target));
     },
   });
 }
@@ -1028,16 +1189,27 @@ function transcriptLine(line: TranscriptLine): string {
 
 /**
  * Full-screen raw live view of one subagent step.
- * Keys: up/down scroll, i = suggest idea, q/esc/ctrl+c = exit to main chat.
+ * Keys: up/down scroll, i = suggest idea, q = exit to main chat.
  */
-async function openSubagentView(ui: any, run: RunState, step: StepState): Promise<string | undefined> {
+async function openSubagentView(
+  ui: any,
+  targets: { run: RunState; step: StepState }[],
+  startIndex: number,
+): Promise<string | undefined> {
   if (typeof ui?.custom !== "function") {
     // headless: fall back to a notify with the latest text
-    const latest = step.transcript.map((l) => l.text).join("\n") || "(no output yet)";
-    ui?.notify(`[${run.id}] ${step.agent} ${step.status} | toolcalls ${step.toolCalls}\n${latest.slice(-1500)}`, "info");
+    const t = targets[startIndex] ?? targets[0];
+    if (!t) return undefined;
+    const latest =
+      t.step.transcript.map((l) => l.text).join("\n") || "(no output yet)";
+    ui?.notify(
+      `[${t.run.id}] ${t.step.agent} ${t.step.status} | toolcalls ${t.step.toolCalls}\n${latest.slice(-1500)}`,
+      "info",
+    );
     return undefined;
   }
   let scroll = 0;
+  let current = Math.max(0, Math.min(startIndex, targets.length - 1));
   return ui.custom(
     (tui: any, theme: any, _kb: any, done: () => void) => {
       let disposed = false;
@@ -1056,7 +1228,11 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
       const yellow = (t: string): string => paint(t, "warning");
       const pad = (text: string, content: number): string =>
         `${blue("\u2502")} ${yellow(text.slice(0, content).padEnd(content))} ${blue("\u2502")}`;
-      const edge = (label: string, content: number, bottom: boolean): string => {
+      const edge = (
+        label: string,
+        content: number,
+        bottom: boolean,
+      ): string => {
         const text = label.slice(0, content - 2);
         const fill = "\u2500".repeat(Math.max(1, content - text.length));
         return `${blue(bottom ? "\u2514 " : "\u250c ")}${yellow(text)}${blue(` ${fill}${bottom ? "\u2518" : "\u2510"}`)}`;
@@ -1065,9 +1241,15 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
         render(width: number): string[] {
           const w = Math.max(30, width);
           const content = w - 4;
+          const { run, step } = targets[current];
           const stepNum = run.steps.indexOf(step) + 1;
-          const stepInfo = run.steps.length > 1 ? ` | step ${stepNum}/${run.steps.length}` : "";
-          const title = `SUBAGENT: ${step.agent} | ${step.status}${stepInfo} | toolcalls ${step.toolCalls}`;
+          const stepInfo =
+            run.steps.length > 1
+              ? ` | step ${stepNum}/${run.steps.length}`
+              : "";
+          const position =
+            targets.length > 1 ? ` | ${current + 1}/${targets.length}` : "";
+          const title = `SUBAGENT: ${step.agent} | ${step.status}${stepInfo} | toolcalls ${step.toolCalls}${position}`;
           const body = step.transcript.map((l) => transcriptLine(l));
           const maxScroll = Math.max(0, body.length - VIEW_WINDOW);
           if (scroll > maxScroll) scroll = maxScroll;
@@ -1077,14 +1259,20 @@ async function openSubagentView(ui: any, run: RunState, step: StepState): Promis
           for (const line of body.slice(start, start + VIEW_WINDOW)) {
             out.push(pad(line, content));
           }
-          const controls = `[${body.length - start}/${body.length}]  up/down scroll   q = back to main chat`;
+          const controls = `[${body.length - start}/${body.length}]   up/down = scroll   left/right = switch agent   q = back to main chat`;
           out.push(edge(controls, content, true));
           return out;
         },
         handleInput(data: string): void {
           if (data === "\x1b[A") scroll = Math.max(0, scroll - 1);
           else if (data === "\x1b[B") scroll += 1;
-          else if (data === "q" || data === "Q") close();
+          else if (data === "\x1b[D") {
+            current = (current - 1 + targets.length) % targets.length;
+            scroll = 0;
+          } else if (data === "\x1b[C") {
+            current = (current + 1) % targets.length;
+            scroll = 0;
+          } else if (data === "q" || data === "Q") close();
         },
         invalidate(): void {
           // no cached state
