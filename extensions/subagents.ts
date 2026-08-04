@@ -33,6 +33,7 @@ const MAX_DEPTH = 3;
 const MAX_OUTPUT_BYTES = 50 * 1024;
 const MAX_PREVIOUS_BYTES = 8 * 1024;
 const MAX_RETRIES_PER_STEP = 5;
+const MAX_TRANSCRIPT_LINES = 400;
 const TRUST_FILE = path.join(".pi", "subagents-trust.json");
 
 // ===================================================================
@@ -67,6 +68,24 @@ interface RunResult {
   step?: number;
 }
 
+interface TranscriptLine {
+  at: number;
+  kind: "text" | "tool" | "result" | "note" | "idea";
+  text: string;
+}
+
+interface StepState {
+  agent: string;
+  label?: string;
+  status: "queued" | "working" | "waiting-approval" | "done" | "failed";
+  startedAt?: number;
+  finishedAt?: number;
+  toolCalls: number;
+  transcript: TranscriptLine[];
+  suggestions: string[];
+  sessionId?: string;
+}
+
 interface RunState {
   id: string;
   mode: "single" | "parallel" | "chain";
@@ -74,6 +93,7 @@ interface RunState {
   agent: string;
   startedAt: number;
   results: RunResult[];
+  steps: StepState[];
   currentStep?: number;
   totalSteps?: number;
   latestText: string;
@@ -197,15 +217,179 @@ function currentDepth(): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+// ===================================================================
+// Transcript + stream parsing
+// ===================================================================
+
+function note(step: StepState, text: string, kind: TranscriptLine["kind"] = "note"): void {
+  step.transcript.push({ at: Date.now(), kind, text });
+  if (step.transcript.length > MAX_TRANSCRIPT_LINES) {
+    step.transcript.splice(0, step.transcript.length - MAX_TRANSCRIPT_LINES);
+  }
+}
+
+function compactArgs(args: unknown, max = 60): string {
+  try {
+    const s = JSON.stringify(args);
+    return s && s.length > max ? s.slice(0, max) + "..." : s ?? "{}";
+  } catch {
+    return "{}";
+  }
+}
+
+function compactResult(result: any, max = 140): string {
+  try {
+    const content = result?.content;
+    let text = "";
+    if (Array.isArray(content)) {
+      text = content
+        .map((c) => (typeof c === "string" ? c : c?.text ?? ""))
+        .join(" ")
+        .trim();
+    } else if (typeof content === "string") {
+      text = content;
+    }
+    if (!text) text = JSON.stringify(result ?? {});
+    const lines = text.split("\n").filter((l) => l.trim());
+    if (lines.length > 6) return lines.slice(0, 6).join(" | ") + ` (...${lines.length} lines)`;
+    return text.slice(0, max);
+  } catch {
+    return String(result ?? "").slice(0, max);
+  }
+}
+
+/**
+ * Attach stdout event parsing to a child pi process. Streams tool calls,
+ * tool results and assistant text into the step transcript, counts tool
+ * calls, and forwards assistant text + messages. Flushes partial lines on
+ * close (listener registered before the caller's own close handler).
+ */
+function attachStreamParser(
+  proc: ChildProcess,
+  step: StepState,
+  onText: (text: string) => void,
+  onMessage: (message: any) => void,
+): void {
+  let buffer = "";
+  const processLine = (line: string) => {
+    if (!line.trim()) return;
+    let event: any;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (event.type === "tool_execution_start" && event.toolName) {
+      step.toolCalls++;
+      note(step, `tool: ${event.toolName} ${compactArgs(event.args)}`, "tool");
+    } else if (event.type === "tool_execution_end") {
+      note(step, `result: ${compactResult(event.result)}${event.isError ? " (ERROR)" : ""}`, "result");
+    } else if (event.type === "message_end" && event.message) {
+      onMessage(event.message);
+      if (event.message.role === "assistant") {
+        for (const part of event.message.content ?? []) {
+          if (part.type === "text" && part.text?.trim()) {
+            const t = part.text;
+            note(step, t, "text");
+            onText(t);
+          }
+        }
+      }
+    }
+  };
+  proc.stdout!.on("data", (data) => {
+    buffer += data.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) processLine(line);
+  });
+  proc.on("close", () => {
+    if (buffer.trim()) processLine(buffer);
+  });
+}
+
+function lastAssistantText(messages: any[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "assistant") {
+      for (const part of msg.content ?? []) {
+        if (part.type === "text" && part.text.trim()) {
+          return part.text;
+        }
+      }
+    }
+  }
+  return "";
+}
+
+/**
+ * Run a user-provided idea as a NEW turn in an existing child session
+ * (`pi --session <id> "<idea>"`). The stored session already carries the
+ * agent system prompt and prior transcript, so the idea is answered in
+ * context. Streams into the same step transcript.
+ */
+async function runContinuation(
+  sessionId: string,
+  idea: string,
+  cwd: string,
+  tools: string[],
+  step: StepState,
+  signal: AbortSignal | undefined,
+): Promise<{ exitCode: number; output: string; error?: string }> {
+  const args = ["--mode", "json", "-p", "--session", sessionId];
+  if (tools.length > 0) args.push("--tools", tools.join(","));
+  args.push(idea);
+
+  const invocation = getPiInvocation(args);
+  const messages: any[] = [];
+  let stderr = "";
+
+  const exitCode = await new Promise<number>((resolve) => {
+    const proc = spawn(invocation.command, invocation.args, {
+      cwd,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PI_WORRIE_DEPTH: String(currentDepth() + 1) },
+    });
+    note(step, `>> idea: ${idea.slice(0, 200)}`, "idea");
+    attachStreamParser(proc, step, () => {}, (m) => messages.push(m));
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+    proc.on("close", (code) => resolve(code ?? 0));
+    proc.on("error", () => resolve(1));
+    if (signal) {
+      const kill = () => {
+        try {
+          proc.kill("SIGTERM");
+        } catch {
+          // ignore
+        }
+      };
+      if (signal.aborted) kill();
+      else signal.addEventListener("abort", kill, { once: true });
+    }
+  });
+
+  const output = lastAssistantText(messages);
+  return {
+    exitCode,
+    output,
+    error: exitCode !== 0 ? (stderr || "(no stderr)").slice(0, 2000) : undefined,
+  };
+}
+
 async function runChild(
   agent: AgentConfig,
   task: string,
   cwd: string,
   run: RunState,
+  step: StepState,
+  sessionId: string,
   signal: AbortSignal | undefined,
   onOutput: (text: string) => void,
 ): Promise<{ exitCode: number; output: string; error?: string }> {
-  const args = ["--mode", "json", "-p", "--no-session"];
+  const args = ["--mode", "json", "-p", "--session-id", sessionId];
   if (agent.model) args.push("--model", agent.model);
   if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
@@ -233,38 +417,11 @@ async function runChild(
       });
       run.children.add(proc);
 
-      let buffer = "";
-      const processLine = (line: string) => {
-        if (!line.trim()) return;
-        let event: any;
-        try {
-          event = JSON.parse(line);
-        } catch {
-          return;
-        }
-        if (event.type === "message_end" && event.message) {
-          messages.push(event.message);
-          if (event.message.role === "assistant") {
-            for (const part of event.message.content ?? []) {
-              if (part.type === "text") onOutput(part.text);
-            }
-          }
-        }
-        if (event.type === "tool_result_end" && event.message) {
-          messages.push(event.message);
-        }
-      };
-      proc.stdout.on("data", (data) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) processLine(line);
-      });
+      attachStreamParser(proc, step, (text) => onOutput(text), (m) => messages.push(m));
       proc.stderr.on("data", (data) => {
         stderr += data.toString();
       });
       proc.on("close", (code) => {
-        if (buffer.trim()) processLine(buffer);
         resolve(code ?? 0);
       });
       proc.on("error", () => resolve(1));
@@ -283,19 +440,7 @@ async function runChild(
     });
 
     // final output = last assistant text
-    let finalText = "";
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg.role === "assistant") {
-        for (const part of msg.content ?? []) {
-          if (part.type === "text" && part.text.trim()) {
-            finalText = part.text;
-            break;
-          }
-        }
-        if (finalText) break;
-      }
-    }
+    const finalText = lastAssistantText(messages);
     const output = Buffer.byteLength(finalText, "utf8") > MAX_OUTPUT_BYTES
       ? `${finalText.slice(0, MAX_OUTPUT_BYTES)}\n\n[Output truncated]`
       : finalText;
@@ -315,16 +460,12 @@ async function runChild(
 // ===================================================================
 
 function widgetLine(run: RunState): string {
-  if (run.mode === "chain") {
-    const step = run.currentStep ?? 1;
-    const total = run.totalSteps ?? 1;
-    return `${run.status === "running" ? "RUN" : run.status.toUpperCase()} chain ${step}/${total}: ${run.agent}`;
-  }
-  if (run.mode === "parallel") {
-    const done = run.results.length;
-    return `RUN parallel ${done}/${run.totalSteps ?? "?"}: ${run.agent}`;
-  }
-  return `${run.status === "running" ? "RUN" : run.status.toUpperCase()} ${run.agent}`;
+  const total = run.totalSteps ?? 1;
+  const step = run.currentStep ?? 1;
+  const idx = run.mode === "single" ? "" : `[${step}/${total}] `;
+  if (run.status === "waiting-approval") return `${idx}Waiting approval (${run.agent})`;
+  if (run.status === "done") return `${idx}Done (${run.agent})`;
+  return `${idx}Running ${run.agent}...`;
 }
 
 function refreshWidget(ui: any): void {
@@ -355,6 +496,14 @@ async function executeChain(
   run: RunState,
 ): Promise<void> {
   run.totalSteps = steps.length;
+  run.steps = steps.map((s) => ({
+    agent: s.agent,
+    label: s.label,
+    status: "queued" as const,
+    toolCalls: 0,
+    transcript: [],
+    suggestions: [],
+  }));
   let previous = "";
   let stepIndex = 0;
   let loopCount = 0;
@@ -362,11 +511,13 @@ async function executeChain(
 
   while (stepIndex < steps.length) {
     const step = steps[stepIndex];
+    const stepState = run.steps[stepIndex];
     const agent = agents.find((a) => a.name === step.agent);
     run.agent = step.agent;
     run.currentStep = stepIndex + 1;
 
     if (!agent) {
+      stepState.status = "failed";
       run.results.push({
         agent: step.agent,
         source: "unknown",
@@ -385,6 +536,7 @@ async function executeChain(
     // approval gate BEFORE running this step (skip for step 1)
     if (step.approval && stepIndex > 0) {
       run.status = "waiting-approval";
+      stepState.status = "waiting-approval";
       refreshWidget(ui);
       let choice = "Continue";
       if (ui?.hasUI && !ui.hasUI()) {
@@ -401,10 +553,12 @@ async function executeChain(
         }
       }
       run.status = "running";
+      stepState.status = "working";
       refreshWidget(ui);
 
       if (choice === "Abort chain") {
         run.status = "aborted";
+        stepState.status = "failed";
         finishRun(run, ui);
         ui?.notify("Chain aborted by user.", "info");
         return;
@@ -431,27 +585,47 @@ async function executeChain(
     }
 
     lastStep = step.agent;
+    stepState.status = "working";
+    stepState.startedAt = Date.now();
+    stepState.sessionId = `worrie-${run.id}-${stepIndex + 1}`;
+    note(stepState, `START ${step.agent}${step.label ? ` (${step.label})` : ""}`);
     const task = step.task.replace(/\{previous\}/g, previous);
-    ui?.setWidget("worrie-subagents", [`RUN chain ${stepIndex + 1}/${steps.length}: ${step.agent}...`]);
+    refreshWidget(ui);
 
-    const result = await runChild(agent, task, step.cwd ?? cwd, run, signal, (text) => {
+    const result = await runChild(agent, task, step.cwd ?? cwd, run, stepState, stepState.sessionId, signal, (text) => {
       run.latestText = text;
     });
 
-    const summary = result.output.slice(0, 400);
+    // drain queued suggestions as continuation turns on the child session
+    let output = result.output;
+    if (result.exitCode === 0 && stepState.suggestions.length > 0) {
+      for (const idea of stepState.suggestions) {
+        note(stepState, `>> applying queued suggestion: ${idea.slice(0, 120)}`, "idea");
+        const cont = await runContinuation(stepState.sessionId, idea, step.cwd ?? cwd, agent.tools, stepState, signal);
+        if (cont.exitCode === 0 && cont.output) {
+          output += `\n\n[Applied suggestion: ${idea.slice(0, 80)}]\n${cont.output}`;
+        } else {
+          output += `\n\n[Queued suggestion failed to apply: ${idea.slice(0, 80)}]`;
+        }
+      }
+    }
+    stepState.status = result.exitCode === 0 ? "done" : "failed";
+    stepState.finishedAt = Date.now();
+
+    const summary = output.slice(0, 400);
     run.results.push({
       agent: step.agent,
       source: agent.source,
       task: step.task,
       label: step.label,
       exitCode: result.exitCode,
-      output: result.output,
+      output,
       error: result.error,
       step: stepIndex + 1,
     });
-    previous = Buffer.byteLength(result.output, "utf8") > MAX_PREVIOUS_BYTES
-      ? `${result.output.slice(0, MAX_PREVIOUS_BYTES)}\n\n[Previous output truncated]`
-      : result.output;
+    previous = Buffer.byteLength(output, "utf8") > MAX_PREVIOUS_BYTES
+      ? `${output.slice(0, MAX_PREVIOUS_BYTES)}\n\n[Previous output truncated]`
+      : output;
 
     if (result.exitCode !== 0) {
       run.status = "failed";
@@ -481,6 +655,13 @@ async function executeParallel(
   run: RunState,
 ): Promise<void> {
   run.totalSteps = tasks.length;
+  run.steps = tasks.map((t) => ({
+    agent: t.agent,
+    status: "queued" as const,
+    toolCalls: 0,
+    transcript: [],
+    suggestions: [],
+  }));
   const results: RunResult[] = new Array(tasks.length);
   let nextIndex = 0;
   const workers = new Array(Math.min(MAX_CONCURRENCY, tasks.length)).fill(null).map(async () => {
@@ -488,9 +669,13 @@ async function executeParallel(
       const idx = nextIndex++;
       if (idx >= tasks.length) return;
       const t = tasks[idx];
+      const stepState = run.steps[idx];
       const agent = agents.find((a) => a.name === t.agent);
       run.agent = t.agent;
+      run.currentStep = idx + 1;
+      refreshWidget(ui);
       if (!agent) {
+        stepState.status = "failed";
         results[idx] = {
           agent: t.agent,
           source: "unknown",
@@ -501,9 +686,15 @@ async function executeParallel(
         };
         continue;
       }
-      const r = await runChild(agent, t.task, t.cwd ?? cwd, run, signal, (text) => {
+      stepState.status = "working";
+      stepState.startedAt = Date.now();
+      stepState.sessionId = `worrie-${run.id}-${idx + 1}`;
+      note(stepState, `START ${t.agent}`);
+      const r = await runChild(agent, t.task, t.cwd ?? cwd, run, stepState, stepState.sessionId, signal, (text) => {
         run.latestText = text;
       });
+      stepState.status = r.exitCode === 0 ? "done" : "failed";
+      stepState.finishedAt = Date.now();
       results[idx] = {
         agent: t.agent,
         source: agent.source,
@@ -683,6 +874,7 @@ export default function (pi: ExtensionAPI) {
         agent: hasChain ? (params.chain![0]?.agent ?? "chain") : hasTasks ? "parallel" : params.agent!,
         startedAt: Date.now(),
         results: [],
+        steps: [],
         latestText: "",
         children: new Set(),
       };
@@ -712,9 +904,24 @@ export default function (pi: ExtensionAPI) {
             finishRun(run, ui);
             return;
           }
-          const r = await runChild(agent, params.task!, cwd, run, signal, (text) => {
+          run.steps = [
+            {
+              agent: agent.name,
+              status: "working" as const,
+              startedAt: Date.now(),
+              toolCalls: 0,
+              transcript: [],
+              suggestions: [],
+              sessionId: `worrie-${run.id}-1`,
+            },
+          ];
+          const stepState = run.steps[0];
+          note(stepState, `START ${agent.name}`);
+          const r = await runChild(agent, params.task!, cwd, run, stepState, stepState.sessionId!, signal, (text) => {
             run.latestText = text;
           });
+          stepState.status = r.exitCode === 0 ? "done" : "failed";
+          stepState.finishedAt = Date.now();
           run.results.push({
             agent: agent.name,
             source: agent.source,
@@ -813,7 +1020,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── /subagents monitor ──
   pi.registerCommand("subagents", {
-    description: "List running subagents and view a run's latest output",
+    description: "List subagents (per stage), open a live raw view, suggest ideas",
     getArgumentCompletions: (prefix: string) => {
       const text = (prefix ?? "").trim();
       const items = Array.from(runs.values()).map((r) => ({
@@ -829,19 +1036,127 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("No subagent runs.", "info");
         return;
       }
-      const list = Array.from(runs.values()).map((r) => {
-        const done = r.results.length;
-        const total = r.totalSteps ?? "?";
-        const label = r.mode === "chain" ? `chain ${r.currentStep ?? 1}/${total}` : `${r.mode} (${done}/${total})`;
-        return `${r.id}  ${label}  ${r.agent}  ${r.status}`;
-      });
+      // one row per step for chains, one row per run otherwise
+      const list: string[] = [];
+      const targets: { run: RunState; step: StepState }[] = [];
+      for (const r of runs.values()) {
+        if (r.steps.length > 1) {
+          r.steps.forEach((s, i) => {
+            list.push(`${r.id}:${i + 1}  ${s.agent} | ${s.status}`);
+            targets.push({ run: r, step: s });
+          });
+        } else {
+          const s = r.steps[0] ?? {
+            agent: r.agent,
+            status: (r.status === "aborted" ? "failed" : r.status) as StepState["status"],
+            toolCalls: 0,
+            transcript: [],
+            suggestions: [],
+          };
+          list.push(`${r.id}  ${s.agent} | ${s.status}`);
+          targets.push({ run: r, step: s });
+        }
+      }
       const choice = await ctx.ui.select("Subagents:", list);
       if (!choice) return;
-      const id = choice.split("  ")[0];
+      const line = choice.split("  ")[0];
+      const [id, stepNum] = line.includes(":") ? line.split(":") : [line, "1"];
       const run = runs.get(id);
       if (!run) return;
-      const latest = run.latestText || run.results.map((r) => r.output).filter(Boolean).join("\n") || "(no output yet)";
-      ctx.ui.notify(`[${run.id}] ${run.agent} ${run.status}\n${latest.slice(-2000)}`, "info");
+      const target = targets.find((t) => t.run.id === id && t.step === run.steps[Number(stepNum) - 1]) ?? targets.find((t) => t.run.id === id);
+      if (!target) return;
+
+      // view loop: view -> suggest -> view again until user exits
+      while (true) {
+        const result = await openSubagentView(ctx.ui, target.run, target.step);
+        if (result !== "suggest") break;
+        const idea = await ctx.ui.input(`Idea for ${target.step.agent}:`, "");
+        if (!idea || !idea.trim()) break;
+        target.step.suggestions.push(idea.trim());
+        note(target.step, `>> suggestion queued: ${idea.trim().slice(0, 200)}`, "idea");
+        if (target.run.status !== "running") {
+          ctx.ui.notify(`Idea queued for finished run ${target.run.id}. It applies only to a running stage.`, "warning");
+        }
+      }
     },
   });
+}
+
+// ===================================================================
+// Live raw view (ui.custom overlay)
+// ===================================================================
+
+const VIEW_WINDOW = 24;
+
+function transcriptLine(step: StepState, line: TranscriptLine): string {
+  const time = new Date(line.at).toLocaleTimeString("en-US", { hour12: false });
+  const tag = line.kind === "tool" ? "tool" : line.kind === "result" ? "result" : line.kind === "idea" ? "idea" : line.kind === "text" ? "  " : "---";
+  return `[${time}] ${tag} ${line.text}`;
+}
+
+/**
+ * Full-screen raw live view of one subagent step.
+ * Keys: up/down scroll, i = suggest idea, q/esc/ctrl+c = exit to main chat.
+ */
+async function openSubagentView(ui: any, run: RunState, step: StepState): Promise<string | undefined> {
+  if (typeof ui?.custom !== "function") {
+    // headless: fall back to a notify with the latest text
+    const latest = step.transcript.map((l) => l.text).join("\n") || "(no output yet)";
+    ui?.notify(`[${run.id}] ${step.agent} ${step.status} | toolcalls ${step.toolCalls}\n${latest.slice(-1500)}`, "info");
+    return undefined;
+  }
+  let scroll = 0;
+  return ui.custom(
+    (tui: any, _theme: any, _kb: any, done: (r?: string) => void) => {
+      let disposed = false;
+      const timer = setInterval(() => {
+        if (!disposed) tui.requestRender();
+      }, 400);
+      const close = (r?: string) => {
+        disposed = true;
+        clearInterval(timer);
+        done(r);
+      };
+      return {
+        render(width: number): string[] {
+          const stepNum = run.steps.indexOf(step) + 1;
+          const header = `${step.agent} | ${step.status} | ${run.id}${run.steps.length > 1 ? ` step ${stepNum}/${run.steps.length}` : ""} | toolcalls ${step.toolCalls}`;
+          const status = run.mode === "chain" ? `chain ${run.currentStep ?? 1}/${run.totalSteps ?? 1} ${run.status}` : `${run.mode} ${run.status}`;
+          const out: string[] = [header, status, "-".repeat(Math.min(width, 60))];
+          const body = step.transcript.map((l) => transcriptLine(step, l));
+          const maxScroll = Math.max(0, body.length - VIEW_WINDOW);
+          if (scroll > maxScroll) scroll = maxScroll;
+          const start = Math.max(0, body.length - VIEW_WINDOW - scroll);
+          for (const line of body.slice(start, start + VIEW_WINDOW)) {
+            out.push(line.length > width ? line.slice(0, width - 1) : line);
+          }
+          out.push("-".repeat(Math.min(width, 60)));
+          out.push(`[${body.length - start}/${body.length}]  up/down scroll  i = suggest idea  q/esc = exit to main chat`);
+          return out;
+        },
+        handleInput(data: string): void {
+          if (data === "\x1b[A") scroll = Math.max(0, scroll - 1);
+          else if (data === "\x1b[B") scroll += 1;
+          else if (data === "i" || data === "I") close("suggest");
+          else if (data === "q" || data === "Q" || data === "\x1b" || data === "\u0003") close(undefined);
+        },
+        invalidate(): void {
+          // no cached state
+        },
+        dispose(): void {
+          disposed = true;
+          clearInterval(timer);
+        },
+      };
+    },
+    {
+      overlay: true,
+      overlayOptions: {
+        width: "95%",
+        maxHeight: "90%",
+        anchor: "center",
+        margin: 1,
+      },
+    },
+  );
 }
