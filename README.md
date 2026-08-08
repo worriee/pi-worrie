@@ -104,7 +104,7 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 pi install git:github.com/worriee/pi-worrie
 ```
 
-After installing: run `/setup` once, then use any persona command.
+After installing: run `/setup`.
 
 ## Requirements
 
