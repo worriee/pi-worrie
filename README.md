@@ -2,7 +2,7 @@
 
 My personal Pi extensions.
 
-> mostly AI generated codes.
+> mostly AI generated.
 
 ---
 
