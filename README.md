@@ -1,6 +1,8 @@
 # pi-worrie
 
-My personal Pi extensions.
+My personal agentic workflow. The same as [uveworkflow](https://github.com/worriee/uveworkflow) but better :>
+
+If you wanna try then install [here.](#installation)
 
 > mostly AI generated.
 
@@ -20,7 +22,7 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 ### Pi - Persona Skills
 
-> the same as [uveworkflow](https://github.com/worriee/uveworkflow) but inside Pi.
+> the commands here are different from the prompt triggers I used in uveworkflow but they're still the same identical flow.
 
 **First run:**
 
