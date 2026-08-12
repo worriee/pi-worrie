@@ -224,18 +224,16 @@ function memoryEntryIds(type: string, includeResolved: boolean): string[] {
 // ===================================================================
 
 // Agent file = ../skills persona + tools + protocol + WORKSPACE RULES from ../rules/.
-const AGENT_SPECS: Record<string, { skill: string; tools: string; memoryProtocol?: string; outputContract?: string }> = {
+const AGENT_SPECS: Record<string, { skill: string; tools: string; memoryProtocol?: string }> = {
   "worrie-planner.md": {
     skill: "planner",
     tools: "read, grep, find, ls",
-    outputContract: `## Output Contract
-Return to the parent: the plan summary only - key steps, files involved, risks. Keep it concise.
-`,
   },
   "worrie-coder.md": {
     skill: "coder",
     tools: "read, grep, find, ls, bash, write, edit",
     memoryProtocol: `## Memory Protocol (MANDATORY)
+- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
 - You may write to ANY memory file as relevant to the task:
   - \`err\` -> .pi/memory/error_memory.md (ERR-NNN)
   - \`code\` -> .pi/memory/codebase_map.md (follow its layer format: FN-FE / FILE-FE / DB / STG / SVC / DEP / OPS)
@@ -249,28 +247,24 @@ Return to the parent: the plan summary only - key steps, files involved, risks. 
 - STRICT ID RULES: always square brackets + 3-digit zero-padded number ([ERR-001], [FLOW-007], [REVIEW-012], [SEC-003], [TEST-002]). Never omit brackets, never drop padding.
 - NEVER delete, truncate, or rewrite existing entries.
 `,
-    outputContract: `## Output Contract
-Return to the parent: files changed, logic added, validation run, memory entries written (IDs). Keep it concise.
-`,
   },
   "worrie-debugger.md": {
     skill: "debugger",
     tools: "read, grep, find, ls, bash, write, edit",
     memoryProtocol: `## Memory Protocol (MANDATORY)
+- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
 - DEFAULT: log to \`.pi/memory/error_memory.md\` (ERR-NNN).
   - Active blockers -> Section 1, LIFO top: \`### [ERR-NNN] Short Title\`
   - Fixed bugs -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (ERR-NNN)\` keeping the original number.
 - When the user explicitly asks, you may also write ANY other memory file (code, impl, sec, rev, test, proj).
 - NEVER delete, truncate, or rewrite entries in Section 2.
 `,
-    outputContract: `## Output Contract
-Return to the parent: root cause, files changed, fix summary, memory entry IDs written (ERR-XXX). Keep it concise.
-`,
   },
   "worrie-orchestrator.md": {
     skill: "orchestrator",
     tools: "read, grep, find, ls, bash, write, edit, subagent, subagent_wait",
     memoryProtocol: `## Memory Protocol (MANDATORY)
+- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
 - Write to whichever memory file matches the persona/stage currently executing:
   - PLAN/DOCUMENT -> impl + proj
   - CODE -> impl
@@ -280,47 +274,38 @@ Return to the parent: root cause, files changed, fix summary, memory entry IDs w
   - REVIEW -> rev
 - New entries go to the TOP of Section 1 (LIFO). NEVER delete existing entries.
 `,
-    outputContract: `## Output Contract
-Return to the parent: stages completed, subagents used, memory entries written (IDs). Keep it concise.
-`,
   },
   "worrie-reviewer.md": {
     skill: "reviewer",
     tools: "read, grep, find, ls, bash, write, edit",
     memoryProtocol: `## Memory Protocol (MANDATORY)
+- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
 - Log findings to \`.pi/memory/review_memory.md\` (REVIEW-NNN):
   - Active findings -> Section 1, LIFO top: \`### [REVIEW-NNN] Short Title\`
   - Resolved findings -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (REVIEW-NNN)\` keeping the original number.
 - NEVER delete, truncate, or rewrite entries in Section 2.
-`,
-    outputContract: `## Output Contract
-Return to the parent: findings with severity, files reviewed, memory entry IDs written. Keep it concise.
 `,
   },
   "worrie-secure.md": {
     skill: "secure",
     tools: "read, grep, find, ls, bash, write, edit",
     memoryProtocol: `## Memory Protocol (MANDATORY)
+- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
 - Log vulnerabilities to \`.pi/memory/security_memory.md\` (SEC-NNN):
   - Active -> Section 1, LIFO top: \`### [SEC-NNN] Short Title (SEVERITY)\`
   - Patched -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (SEC-NNN)\` and update the Overall Security Score.
 - NEVER delete, truncate, or rewrite entries in Section 2.
-`,
-    outputContract: `## Output Contract
-Return to the parent: vulnerabilities found, security score, remediation plan, memory entry IDs. Keep it concise.
 `,
   },
   "worrie-tester.md": {
     skill: "tester",
     tools: "read, grep, find, ls, bash, write, edit",
     memoryProtocol: `## Memory Protocol (MANDATORY)
+- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
 - Log strategies to \`.pi/memory/test_memory.md\` (TEST-NNN):
   - Active -> Section 1, LIFO top: \`### [TEST-NNN] Short Title\`
   - Resolved -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (TEST-NNN)\` keeping the original number.
 - NEVER delete, truncate, or rewrite entries in Section 2.
-`,
-    outputContract: `## Output Contract
-Return to the parent: stages run, pass/fail per stage, coverage numbers, memory entry IDs. Keep it concise.
 `,
   },
 };
@@ -351,6 +336,41 @@ function loadWorkspaceRules(): string {
   }
 }
 
+// H2 sections from the full rules that a subagent actually needs at execution time.
+// Everything else (persona matrix, delegation, flag protocols, init/archive/clean) is
+// main-session meta-work handled by the extension commands + the parent session.
+const SUBAGENT_RULES_SECTIONS = [
+  "System Boundaries",
+  "Strict Rule Modification Constraints",
+  "MANDATORY TIMESTAMP COMPUTATION RULE",
+  "NEWEST-ON-TOP SORTING ENFORCEMENT",
+  "BEGINNER-FRIENDLY HIGH-DETAIL CLARITY MANDATE",
+  "IMMUTABLE SECTION TITLE AND LOG PROTECTION",
+  "CRITICAL DATA RETENTION & HISTORICAL PRESERVATION",
+  "IMMEDIATE RESOLUTION MANDATE",
+];
+
+/** Slice out only the subagent-relevant H2 sections from the full rules text. */
+function buildSubagentRules(full: string): string {
+  const lines = full.split("\n");
+  const isH2 = new Array(lines.length).fill(false);
+  let fence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trimStart();
+    if (t.startsWith("```")) fence = !fence;
+    if (!fence && /^##\s+\S/.test(t)) isH2[i] = true;
+  }
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!isH2[i] || !SUBAGENT_RULES_SECTIONS.some((p) => lines[i].includes(p))) continue;
+    let j = i + 1;
+    while (j < lines.length && !isH2[j]) j++;
+    out.push(lines.slice(i, j).join("\n").trim());
+    i = j - 1;
+  }
+  return out.join("\n\n");
+}
+
 const RULES_START = "## WORKSPACE RULES (pi-worrie -- immutable)";
 const RULES_END = "<!-- end worrie workspace rules -->";
 
@@ -358,9 +378,9 @@ function rulesBlock(rulesText: string): string {
   return `${RULES_START}\n\n${rulesText}\n\n${RULES_END}`;
 }
 
-// Agent file = skill persona + tools + memory protocol + output contract + workspace rules.
+// Agent file = skill persona + tools + memory protocol + slim workspace rules.
 function buildAgentFile(
-  spec: { skill: string; tools: string; memoryProtocol?: string; outputContract?: string },
+  spec: { skill: string; tools: string; memoryProtocol?: string },
   rulesText: string,
 ): string {
   const skillPath = join(PKG_ROOT, "skills", spec.skill, "SKILL.md");
@@ -371,7 +391,7 @@ function buildAgentFile(
       skill = skill.slice(0, end) + `\ntools: ${spec.tools}\nsystemPromptMode: replace\ninheritProjectContext: true` + skill.slice(end);
     }
   }
-  const extra = [spec.memoryProtocol, spec.outputContract].filter(Boolean).join("\n");
+  const extra = spec.memoryProtocol ? spec.memoryProtocol + "\n" : "";
   return skill + (extra ? `\n\n${extra}` : "") + "\n\n" + rulesBlock(rulesText) + "\n";
 }
 
@@ -859,7 +879,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       // agent files: create missing; refresh the WORKSPACE RULES section on re-run (persona kept)
-      const rulesText = loadWorkspaceRules();
+      const rulesText = buildSubagentRules(loadWorkspaceRules());
       let agents = 0;
       for (const [file, spec] of Object.entries(AGENT_SPECS)) {
         const agentPath = join(AGENTS_DIR, file);
