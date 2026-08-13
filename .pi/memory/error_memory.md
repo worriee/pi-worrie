@@ -2,19 +2,38 @@
 
 ## 0. Last Synchronized Checkpoint
 
-- **Last Error Check**: August 11, 2026, 09:16 PM PST
+- **Last Error Check**: August 13, 2026, 04:13 PM PST
 
 ## 1. Active & Unresolved Errors
 
 _List errors currently blocking development. Update this section immediately when a new error occurs during execution or user prompting._
 
-_No active blockers as of August 11, 2026, 09:16 PM PST sync. ERR-001 (updater output parsing) verified fixed in extensions/updater.ts — "added"/"audited" checked before "up to date"._
+### [ERR-005] Refresh re-run drops c: worrie credit marker after RULES_END sentinel removal
+
+- **The Issue**: Removing the `<!-- end rules -->` sentinel and reusing the credit marker as the rules block boundary exposed a slice bug in `refreshRulesSection()`: `tail = content.slice(eIdx + RULES_END.length)` consumed the marker itself, so re-running `/setup` on an existing agent file produced a file with ZERO credit markers.
+- **Impact**: Generated agent files lost the single `c: worrie` credit on refresh; `<!-- end rules -->` stray comment also violated the "only c: worrie at EOF" requirement.
+
+_No active blockers as of August 13, 2026, 04:13 PM PST sync. ERR-001 fixed; ERR-004 + ERR-005 resolved same-session — see Section 2._
 
 ---
 
 ## 2. Historical & Resolved Errors
 
 _Move errors to this section once they are completely verified as fixed. This serves as historical memory to prevent the AI from re-introducing the same bugs._
+
+### [RESOLVED] Refresh re-run drops c: worrie credit marker after RULES_END sentinel removal (ERR-005)
+
+- **The Issue**: After dropping the `<!-- end rules -->` sentinel, `refreshRulesSection()` sliced the tail past the credit marker (`slice(eIdx + RULES_END.length)`), deleting it on `/setup` re-runs.
+- **The Resolution**: `refreshRulesSection()` now uses `content.lastIndexOf(RULES_END)` and `tail = content.slice(eIdx)` — the marker is preserved as part of the tail, never consumed. Heal/append branches (no marker or no rules block found) append `RULES_END` so every rebuilt file ends with exactly one credit marker. `rulesBlock()` emits no terminator marker; `RULES_END` is only a boundary + final credit.
+- **Verification**: 18/18 checks PASS — build + refresh for all 8 personas, plus heal-branch and append-branch: no `end rules` substring anywhere, exactly 1 `c: worrie`, last non-blank line is `<!-- c: worrie -->`.
+- **Prevention Strategy**: Block terminators must never be emitted inside the rules block; boundary search must keep the boundary string in the tail slice. Re-verify refresh on re-run paths when touching marker assembly.
+
+### [RESOLVED] Duplicate c: worrie credit markers in generated agent files (ERR-004)
+
+- **The Issue**: `buildAgentFile()` emitted 2-3 `<!-- c: worrie -->` markers per generated agent file (RULES_END terminator + EOF append + leaked indented marker from worrie-debugger skill).
+- **The Resolution**: `RULES_END` changed to a non-credit sentinel `<!-- end rules -->` (keeps refreshRulesSection block boundary working); skill marker strip regex hardened to `/\s*<!--\s*c: worrie\s*-->\s*$/` (handles indented markers). EOF `<!-- c: worrie -->` is now the sole credit marker, on the last line.
+- **Verification**: Simulated buildAgentFile against all 8 real SKILL.md files — 8/8 PASS: exactly 1 marker, last line is `<!-- c: worrie -->`.
+- **Prevention Strategy**: Any future marker assembly must keep exactly one `c: worrie` occurrence at file EOF; block terminators must use non-credit sentinels. Existing generated files (pre-fix) must be deleted and regenerated via `/setup` — `refreshRulesSection` cannot strip legacy mid-file markers on old files.
 
 ### [RESOLVED] Redo session tracking broken after multiple undos (ERR-003)
 
