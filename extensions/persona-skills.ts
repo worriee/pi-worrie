@@ -24,6 +24,19 @@ const AGENTS_DIR = join(CONFIG_DIR, "agents");
 const ARCHIVES_DIR = join(CONFIG_DIR, "archives");
 const WORKSPACE_FILE = join(CONFIG_DIR, "workspace.json");
 
+/** Read project_name from workspace.json, tolerating the trailing c: worrie comment. */
+function readWorkspaceName(): string {
+  try {
+    const raw = readFileSync(WORKSPACE_FILE, "utf8");
+    return (
+      JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1))
+        .project_name ?? "unknown"
+    );
+  } catch {
+    return "unknown";
+  }
+}
+
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const SHELL_TOOLS = [...READ_ONLY_TOOLS, "subagent", "subagent_wait"];
 
@@ -1016,14 +1029,7 @@ export default function (pi: ExtensionAPI) {
         );
         ctx.ui.notify(`WORKSPACE INITIALIZED: ${name} | ID: ${slug}`, "info");
       } else {
-        let name = "unknown";
-        try {
-          name =
-            JSON.parse(readFileSync(WORKSPACE_FILE, "utf8")).project_name ??
-            "unknown";
-        } catch {
-          // ignore
-        }
+        const name = readWorkspaceName();
         ctx.ui.notify(`WORKSPACE ALREADY INITIALIZED: ${name}`, "info");
       }
 
@@ -1473,6 +1479,101 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify("Clean cancelled - nothing removed.", "info");
         }
       }
+    },
+  });
+
+  // ── /obsidian ──
+  pi.registerCommand("obsidian", {
+    description:
+      "Mirror workspace memory logs and config to your Obsidian vault",
+    handler: async (_args, ctx) => {
+      if (!setupDone()) {
+        ctx.ui.notify(
+          "Run /setup first to initialize the workspace.",
+          "warning",
+        );
+        return;
+      }
+      let projectName = readWorkspaceName();
+
+      const projMemory = join(CONFIG_DIR, "rules", "project_memory.md");
+      let vault = "";
+      let persist = false;
+      if (existsSync(projMemory)) {
+        const m = readFileSync(projMemory, "utf8").match(
+          /\*\*Obsidian Vault Path\*\*: (.+)/,
+        );
+        if (m) vault = m[1].trim();
+      }
+      if (!vault) {
+        const input = await ctx.ui.input(
+          "Enter absolute path to your Obsidian vault:",
+          "",
+        );
+        if (!input || !input.trim()) {
+          ctx.ui.notify(
+            "Obsidian sync cancelled - no vault path given.",
+            "info",
+          );
+          return;
+        }
+        vault = input.trim().replace(/[\\/]+$/, "");
+        persist = true;
+      }
+
+      const dest = join(vault, projectName);
+      const jobs: Array<[string, string]> = [
+        [WORKSPACE_FILE, "workspace.json"],
+      ];
+      if (existsSync(projMemory))
+        jobs.push([projMemory, join("rules", "project_memory.md")]);
+      for (const file of Object.keys(MEMORY_TEMPLATES)) {
+        const p = join(MEMORY_DIR, file);
+        if (existsSync(p)) jobs.push([p, join("memory", file)]);
+      }
+      for (const file of Object.keys(ARCHIVE_TEMPLATES)) {
+        const p = join(ARCHIVES_DIR, file);
+        if (existsSync(p)) jobs.push([p, join("archives", file)]);
+      }
+      if (existsSync(AGENTS_DIR)) {
+        for (const entry of readdirSync(AGENTS_DIR)) {
+          jobs.push([join(AGENTS_DIR, entry), join("agents", entry)]);
+        }
+      }
+      const agentsMd = join(CONFIG_DIR, "..", "AGENTS.md");
+      if (existsSync(agentsMd)) jobs.push([agentsMd, "AGENTS.md"]);
+
+      let copied: string[] = [];
+      try {
+        for (const [src, rel] of jobs) {
+          const target = join(dest, rel);
+          mkdirSync(dirname(target), { recursive: true });
+          writeFileSync(target, readFileSync(src));
+          copied.push(rel);
+        }
+      } catch (err) {
+        ctx.ui.notify(`Obsidian sync failed: ${err}`, "error");
+        return;
+      }
+
+      // persist the vault path for future runs (LIFO entry in project_memory)
+      if (persist && existsSync(projMemory)) {
+        const content = readFileSync(projMemory, "utf8");
+        if (!/\*\*Obsidian Vault Path\*\*: /.test(content)) {
+          const anchor = content.indexOf("\n## 1.");
+          const line = `\n- **Obsidian Vault Path**: ${vault}\n`;
+          const next =
+            anchor >= 0
+              ? content.slice(0, anchor) + line + content.slice(anchor)
+              : content.replace(/\s*$/, "") + "\n" + line;
+          writeFileSync(projMemory, next);
+        }
+      }
+
+      ctx.ui.notify(
+        `Obsidian sync complete. ${copied.length} file(s) mirrored to ${dest}\n${copied.join("\n")}`,
+        "info",
+      );
     },
   });
 

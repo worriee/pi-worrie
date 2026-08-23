@@ -66,6 +66,10 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 
 - **`/clean`** — Scans for junk files (`.bak`, `.tmp`, `.log`, empty files) and debug traces (console.*, debugger, TODO, FIXME). Shows the list, asks your approval, removes approved junk files only. Source files are never touched.
 
+**Obsidian:**
+
+- **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault path once, remembers it, always overwrites with the latest version. Run `/setup` first.
+
 **Memory config:**
 
 - `autoLog` — after read-only persona work, asks "Save to memory?" (default ON)
