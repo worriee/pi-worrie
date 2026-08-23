@@ -104,6 +104,17 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 
 ---
 
+### Pi - Worrie Themed
+
+> Custom status bar footer. Replaces pi's default footer with your own project line and hides other extensions' footer statuses while active.
+
+- **`/worrie-themed`** — Opens an On/Off dropdown. Swaps the default footer for a worrie status bar: `folder/project : git branch | ctx % | model` plus your worrie persona statuses.
+- **`/worrie-themed on|off`** — Toggle directly without the dropdown.
+
+Setting persists across sessions (stored in `.pi/worrie-themed.json`) until turned off.
+
+---
+
 ## Installation
 
 ```bash

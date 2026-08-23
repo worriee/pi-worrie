@@ -24,7 +24,8 @@
     "extensions": [
       "./extensions/updater.ts",
       "./extensions/persona-skills.ts",
-      "./extensions/subagents.ts"
+      "./extensions/subagents.ts",
+      "./extensions/worrie-themed.ts"
     ],
     "skills": [
       "./skills"
