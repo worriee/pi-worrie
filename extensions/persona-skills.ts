@@ -83,8 +83,13 @@ function rulesOptions(): { label: string; source: RulesSource }[] {
 function applyRulesSource(source: RulesSource): boolean {
   let content: string;
   if (source === "pi") {
-    content =
-      "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
+    // Self-contained: embed the slim rules directly (same body the worrie-*
+    // agent files carry). Installed workspaces have no .pi/rules copies of
+    // .clinerules/system_instructions.md, so a pointer would target nothing.
+    const rules = buildSubagentRules(loadWorkspaceRules()).trim();
+    content = rules
+      ? `# Rules Override (pi-worrie)\n\n${rules}`
+      : "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
   } else {
     const file = source === "agents" ? "AGENTS.md" : "CLAUDE.md";
     const p = join(CWD, file);

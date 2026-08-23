@@ -72,7 +72,7 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 
 **Rules:**
 
-- **`/rules`** — Choose which rules the main session follows: default `.pi` rules, or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Enforced via pi's native `AGENTS.override.md` slot in the project root (auto-restored on session start). `/setup` asks this once when a conflicting rules file exists; afterwards use `/rules`.
+- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (embedded slim rule set from the package), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Enforced via pi's native `AGENTS.override.md` slot in the project root (auto-restored on session start). `/setup` asks this once when a conflicting rules file exists; afterwards use `/rules`.
 
 **Memory config:**
 
