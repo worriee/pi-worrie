@@ -2,24 +2,26 @@
 
 ## 0. Last Synchronized Checkpoint
 
-- **Last Error Check**: August 13, 2026, 04:13 PM PST
+- **Last Error Check**: August 23, 2026, 06:28 PM PST
 
 ## 1. Active & Unresolved Errors
 
 _List errors currently blocking development. Update this section immediately when a new error occurs during execution or user prompting._
 
-### [ERR-005] Refresh re-run drops c: worrie credit marker after RULES_END sentinel removal
-
-- **The Issue**: Removing the `<!-- end rules -->` sentinel and reusing the credit marker as the rules block boundary exposed a slice bug in `refreshRulesSection()`: `tail = content.slice(eIdx + RULES_END.length)` consumed the marker itself, so re-running `/setup` on an existing agent file produced a file with ZERO credit markers.
-- **Impact**: Generated agent files lost the single `c: worrie` credit on refresh; `<!-- end rules -->` stray comment also violated the "only c: worrie at EOF" requirement.
-
-_No active blockers as of August 13, 2026, 04:13 PM PST sync. ERR-001 fixed; ERR-004 + ERR-005 resolved same-session — see Section 2._
+_No active blockers as of August 23, 2026, 06:28 PM PST sync. ERR-001 through ERR-006 all resolved — see Section 2._
 
 ---
 
 ## 2. Historical & Resolved Errors
 
 _Move errors to this section once they are completely verified as fixed. This serves as historical memory to prevent the AI from re-introducing the same bugs._
+
+### [RESOLVED] setupDone() strict JSON.parse fails on c: worrie comment — perpetual "Run /setup first" (ERR-006)
+
+- **The Issue**: `setupDone()` in extensions/persona-skills.ts parsed `.pi/workspace.json` with strict `JSON.parse`. Every workspace.json ends with the `// c: worrie` credit comment (written by `/setup` from the template), so the parse ALWAYS threw; the catch silently returned `false`. Every command then warned "Run /setup first to initialize the workspace" forever — even after running `/setup` twice (each run re-wrote the same commented file, and the checker kept failing). Same bug family as the `readWorkspaceName()` fix, but a second, independent strict-parse copy of the file reader.
+- **The Resolution**: One shared tolerant reader `readWorkspace()` (slices between first `{` and last `}` before parsing, so trailing comments are ignored; returns `null` when missing/broken). Three consumers now use it: `setupDone()`, `readWorkspaceName()`, and `/obsidian`'s project name lookup.
+- **Verification**: 6/6 simulation cases PASS against real-world shapes — commented file, uninitialized marker, empty id, missing file, garbage, clean JSON. Syntax check PASS.
+- **Prevention Strategy**: (1) ONE file = ONE reader function — never have two strict-parse copies of the same file; (2) never `catch { return false }` silently — missing file is normal, broken parse is a bug and should be logged; (3) the `c: worrie` comment is part of the file format in this project — every reader of `.pi/workspace.json`, memory files, and agent files must tolerate it; (4) test with the REAL artifact, not a clean-JSON idealization.
 
 ### [RESOLVED] Refresh re-run drops c: worrie credit marker after RULES_END sentinel removal (ERR-005)
 

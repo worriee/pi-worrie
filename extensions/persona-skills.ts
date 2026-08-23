@@ -25,16 +25,18 @@ const ARCHIVES_DIR = join(CONFIG_DIR, "archives");
 const WORKSPACE_FILE = join(CONFIG_DIR, "workspace.json");
 
 /** Read project_name from workspace.json, tolerating the trailing c: worrie comment. */
-function readWorkspaceName(): string {
+/** Parse workspace.json tolerating the trailing c: worrie comment. Null if missing/broken. */
+function readWorkspace(): any {
   try {
     const raw = readFileSync(WORKSPACE_FILE, "utf8");
-    return (
-      JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1))
-        .project_name ?? "unknown"
-    );
+    return JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
   } catch {
-    return "unknown";
+    return null;
   }
+}
+
+function readWorkspaceName(): string {
+  return readWorkspace()?.project_name ?? "unknown";
 }
 
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
@@ -220,13 +222,8 @@ function memPath(type: string): string {
 }
 
 function setupDone(): boolean {
-  try {
-    if (!existsSync(WORKSPACE_FILE)) return false;
-    const ws = JSON.parse(readFileSync(WORKSPACE_FILE, "utf8"));
-    return !!ws.workspace_id && ws.workspace_id !== "uninitialized";
-  } catch {
-    return false;
-  }
+  const ws = readWorkspace();
+  return !!ws?.workspace_id && ws.workspace_id !== "uninitialized";
 }
 
 // Next id for a file. Template examples hold 001, so the first real log gets 002 (REVIEW-017).
