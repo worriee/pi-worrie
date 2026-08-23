@@ -6,6 +6,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const CONFIG_FILE = join(process.cwd(), ".pi", "worrie-themed.json");
 
+// Live context handle, refreshed on every hook so the footer never goes stale.
+let latestCtx: any;
+let latestModel: any;
+
 function readConfig(): boolean {
   try {
     return JSON.parse(readFileSync(CONFIG_FILE, "utf8")).enabled === true;
@@ -37,9 +41,44 @@ function projectLabel(): string {
   }
 }
 
+/** Token count abbreviation matching pi's built-in footer. */
+function fmtTokens(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1000000) return `${Math.round(count / 1000)}k`;
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+  return `${Math.round(count / 1000000)}M`;
+}
+
+/** Context segment in pi's built-in style: "12.3%/200k" or "?/200k". */
+function contextSegment(theme: any): string {
+  const usage = latestCtx?.getContextUsage?.();
+  const window = usage?.contextWindow ?? 0;
+  if (usage?.percent == null) {
+    return theme.fg("dim", `?/${fmtTokens(window)}`);
+  }
+  const text = `${usage.percent.toFixed(1)}%/${fmtTokens(window)}`;
+  if (usage.percent > 90) return theme.fg("error", text);
+  if (usage.percent > 70) return theme.fg("warning", text);
+  return theme.fg("dim", text);
+}
+
+/** Model segment with provider always shown: "(provider) id". */
+function modelSegment(theme: any): string {
+  const model =
+    latestCtx?.getModel?.() ??
+    (latestCtx?.model ? latestCtx.model : undefined) ??
+    latestModel;
+  if (!model?.id) return theme.fg("dim", "no-model");
+  return model.provider
+    ? `(${model.provider}) ${model.id}`
+    : model.id;
+}
+
 export default function (pi: ExtensionAPI) {
   const applyFooter = (ctx: any): void => {
     if (ctx.mode !== "tui") return;
+    latestCtx = ctx;
     ctx.ui.setFooter(
       (
         _tui: unknown,
@@ -50,18 +89,24 @@ export default function (pi: ExtensionAPI) {
         },
       ) => ({
         render(width: number): string[] {
-          const percent = ctx?.getContextUsage?.()?.percent;
-          const percentText = percent == null ? "--" : `${Math.round(percent)}%`;
-          const model = ctx?.getModel?.()?.label ?? "no model";
           const branch = footerData.getGitBranch() ?? "no git";
-          const line1 = `${projectLabel()} : ${branch} | ctx ${percentText} | ${model}`;
-          const lines = [theme.fg("dim", line1)];
+          const line1 = theme.fg(
+            "dim",
+            `${projectLabel()} : ${branch} | `,
+          );
+          const lines = [
+            truncateToWidth(
+              line1 + contextSegment(theme) + theme.fg("dim", " | ") + modelSegment(theme),
+              width,
+            ),
+          ];
           const own: string[] = [];
           for (const [key, text] of footerData.getExtensionStatuses()) {
             if (key.startsWith("worrie") && text) own.push(text);
           }
-          if (own.length > 0) lines.push(theme.fg("dim", own.join(" · ")));
-          return lines.map((l) => truncateToWidth(l, width));
+          if (own.length > 0)
+            lines.push(truncateToWidth(theme.fg("dim", own.join(" · ")), width));
+          return lines;
         },
       }),
     );
@@ -113,8 +158,18 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // restore on startup / session switch when saved as enabled
+  // keep the live context fresh + restore the saved footer state
   pi.on("session_start", async (_event, ctx) => {
+    latestCtx = ctx;
     if (readConfig()) applyFooter(ctx);
+  });
+  pi.on("before_agent_start", async (_event, ctx) => {
+    latestCtx = ctx;
+  });
+  pi.on("turn_start", async (_event, ctx) => {
+    latestCtx = ctx;
+  });
+  pi.on("model_select", async (event) => {
+    latestModel = event.model;
   });
 }

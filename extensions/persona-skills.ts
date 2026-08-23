@@ -962,7 +962,7 @@ export default function (pi: ExtensionAPI) {
       // ephemeral session
     }
     if (!setupDone()) {
-      ctx.ui.setStatus("worrie-setup", "[SETUP] not initialized - run /setup");
+      ctx.ui.setStatus("worrie-setup", "[SETUP] not initialized");
     }
     ctx.ui.setStatus(
       "worrie-memory",
