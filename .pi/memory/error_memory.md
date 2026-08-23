@@ -2,19 +2,26 @@
 
 ## 0. Last Synchronized Checkpoint
 
-- **Last Error Check**: August 23, 2026, 06:28 PM PST
+- **Last Error Check**: August 23, 2026, 07:28 PM PST
 
 ## 1. Active & Unresolved Errors
 
 _List errors currently blocking development. Update this section immediately when a new error occurs during execution or user prompting._
 
-_No active blockers as of August 23, 2026, 06:28 PM PST sync. ERR-001 through ERR-006 all resolved — see Section 2._
+_No active blockers as of August 23, 2026, 07:28 PM PST sync. ERR-001 through ERR-007 all resolved — see Section 2._
 
 ---
 
 ## 2. Historical & Resolved Errors
 
 _Move errors to this section once they are completely verified as fixed. This serves as historical memory to prevent the AI from re-introducing the same bugs._
+
+### [RESOLVED] Subagent launch fails — "Unknown agent worrie-coder" (ERR-007)
+
+- **The Issue**: `/setup` generated `.pi/agents/worrie-coder.md` etc., but `buildAgentFile()` copied the SKILL.md frontmatter verbatim, keeping the generic skill name (`name: coder`). `subagents.ts` discovers agents by frontmatter `name` (not filename), so agents registered as `coder, debugger, ...` while every persona command launched `worrie-coder` → lookup miss → "Unknown agent worrie-coder. Available: coder, debugger, orchestrator, planner, reviewer, secure, tester".
+- **The Resolution**: `buildAgentFile()` gained an `agentName` param (filename stem); it now rewrites the frontmatter `name:` line to the `worrie-*` identity inside the frontmatter block (insert if absent). Caller passes `file.replace(/\.md$/, "")`. Discovery list now matches persona launches exactly. No changes needed in subagents.ts or PERSONAS.
+- **Verification**: 7/7 full-assembly simulations PASS — frontmatter renamed to `worrie-*`, still discoverable (name + description present), exactly one `c: worrie` marker on the last line.
+- **Prevention Strategy**: Generated artifacts must carry the IDENTITY consumers look up, not the source template's identity. When a pipeline has a generator + a discovery/registry step, verify the registered key equals the referenced key end-to-end at least once per release.
 
 ### [RESOLVED] setupDone() strict JSON.parse fails on c: worrie comment — perpetual "Run /setup first" (ERR-006)
 

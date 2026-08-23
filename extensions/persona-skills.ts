@@ -39,6 +39,69 @@ function readWorkspaceName(): string {
   return readWorkspace()?.project_name ?? "unknown";
 }
 
+// ===================================================================
+// Rules source: which rules the main session follows
+// (default .pi rules vs a project AGENTS.md / CLAUDE.md).
+// Enforced via pi's native AGENTS.override.md slot in the project root.
+// ===================================================================
+
+const RULES_SOURCE_FILE = join(CONFIG_DIR, "rules-source.json");
+const OVERRIDE_FILE = join(CWD, "AGENTS.override.md");
+const RULES_SOURCES = ["pi", "agents", "claude"] as const;
+type RulesSource = (typeof RULES_SOURCES)[number];
+
+function readRulesSource(): RulesSource | null {
+  try {
+    const s = JSON.parse(readFileSync(RULES_SOURCE_FILE, "utf8")).source;
+    return RULES_SOURCES.includes(s) ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeRulesSource(source: RulesSource): void {
+  mkdirSync(CONFIG_DIR, { recursive: true });
+  writeFileSync(RULES_SOURCE_FILE, `${JSON.stringify({ source }, null, 2)}\n`);
+}
+
+/** Dialog options built from what actually exists in the project root. */
+function rulesOptions(): { label: string; source: RulesSource }[] {
+  const opts: { label: string; source: RulesSource }[] = [
+    { label: "Use current extension rules (Default)", source: "pi" },
+  ];
+  if (existsSync(join(CWD, "AGENTS.md")))
+    opts.push({ label: "Use AGENTS.md", source: "agents" });
+  if (existsSync(join(CWD, "CLAUDE.md")))
+    opts.push({ label: "Use CLAUDE.md", source: "claude" });
+  return opts;
+}
+
+/**
+ * Materialize the chosen rules into AGENTS.override.md — pi loads it FIRST,
+ * so it wins over AGENTS.md/CLAUDE.md. Returns true on success.
+ */
+function applyRulesSource(source: RulesSource): boolean {
+  let content: string;
+  if (source === "pi") {
+    content =
+      "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
+  } else {
+    const file = source === "agents" ? "AGENTS.md" : "CLAUDE.md";
+    const p = join(CWD, file);
+    if (!existsSync(p)) return false;
+    content = readFileSync(p, "utf8");
+  }
+  try {
+    writeFileSync(
+      OVERRIDE_FILE,
+      `${content.replace(/\s+$/, "")}\n\n<!-- c: worrie -->\n`,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const SHELL_TOOLS = [...READ_ONLY_TOOLS, "subagent", "subagent_wait"];
 
@@ -425,6 +488,7 @@ function rulesBlock(rulesText: string): string {
 function buildAgentFile(
   spec: { skill: string; tools: string; memoryProtocol?: string },
   rulesText: string,
+  agentName: string,
 ): string {
   const skillPath = join(PKG_ROOT, "skills", spec.skill, "SKILL.md");
   let skill = readFileSync(skillPath, "utf8");
@@ -433,8 +497,13 @@ function buildAgentFile(
   if (skill.startsWith("---")) {
     const end = skill.indexOf("\n---", 3);
     if (end > 0) {
+      // Rename to the worrie-* agent identity — subagents.ts discovers by
+      // frontmatter name, and persona commands launch worrie-* agents.
+      const head = /\nname:[^\n]*/.test(skill.slice(0, end))
+        ? skill.slice(0, end).replace(/\nname:[^\n]*/, `\nname: ${agentName}`)
+        : `${skill.slice(0, end)}\nname: ${agentName}`;
       skill =
-        skill.slice(0, end) +
+        head +
         `\ntools: ${spec.tools}\nsystemPromptMode: replace\ninheritProjectContext: true` +
         skill.slice(end);
     }
@@ -475,12 +544,7 @@ function refreshRulesSection(filePath: string, rulesText: string): boolean {
       "\n";
   } else {
     next =
-      content.replace(/\s+$/, "") +
-      "\n\n" +
-      block +
-      "\n\n" +
-      RULES_END +
-      "\n";
+      content.replace(/\s+$/, "") + "\n\n" + block + "\n\n" + RULES_END + "\n";
   }
   if (next === content) return false;
   writeFileSync(filePath, next);
@@ -958,6 +1022,9 @@ export default function (pi: ExtensionAPI) {
     } catch {
       // ephemeral session
     }
+    // restore the rules override if a source was chosen before
+    const saved = readRulesSource();
+    if (saved) applyRulesSource(saved);
     if (!setupDone()) {
       ctx.ui.setStatus("worrie-setup", "[SETUP] not initialized");
     }
@@ -1061,10 +1128,30 @@ export default function (pi: ExtensionAPI) {
       for (const [file, spec] of Object.entries(AGENT_SPECS)) {
         const agentPath = join(AGENTS_DIR, file);
         if (!existsSync(agentPath)) {
-          writeFileSync(agentPath, buildAgentFile(spec as any, rulesText));
+          writeFileSync(
+            agentPath,
+            buildAgentFile(spec as any, rulesText, file.replace(/\.md$/, "")),
+          );
           agents++;
         } else if (rulesText && refreshRulesSection(agentPath, rulesText)) {
           agents++;
+        }
+      }
+
+      // rules source: ask ONCE when a conflicting AGENTS.md/CLAUDE.md exists;
+      // afterwards only /rules reopens the dialog
+      if (!readRulesSource()) {
+        const opts = rulesOptions();
+        if (opts.length > 1) {
+          const picked = await ctx.ui.select(
+            "Which rules should this workspace follow?",
+            opts.map((o) => o.label),
+          );
+          const chosen = opts.find((o) => o.label === picked);
+          if (chosen) {
+            writeRulesSource(chosen.source);
+            applyRulesSource(chosen.source);
+          }
         }
       }
 
@@ -1571,6 +1658,38 @@ export default function (pi: ExtensionAPI) {
         `Obsidian sync complete. ${copied.length} file(s) mirrored to ${dest}\n${copied.join("\n")}`,
         "info",
       );
+    },
+  });
+
+  // ── /rules ──
+  pi.registerCommand("rules", {
+    description:
+      "Choose which rules to follow: default .pi rules, AGENTS.md, or CLAUDE.md",
+    handler: async (_args, ctx) => {
+      if (!setupDone()) {
+        ctx.ui.notify(
+          "Run /setup first to initialize the workspace.",
+          "warning",
+        );
+        return;
+      }
+      const opts = rulesOptions();
+      const picked = await ctx.ui.select(
+        "Which rules should this workspace follow?",
+        opts.map((o) => o.label),
+      );
+      if (!picked) return;
+      const chosen = opts.find((o) => o.label === picked);
+      if (!chosen) return;
+      writeRulesSource(chosen.source);
+      if (!applyRulesSource(chosen.source)) {
+        ctx.ui.notify(
+          `Could not write AGENTS.override.md for ${chosen.label}.`,
+          "warning",
+        );
+        return;
+      }
+      ctx.ui.notify(`Rules source set to ${chosen.label}.`, "info");
     },
   });
 

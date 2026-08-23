@@ -70,6 +70,10 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 
 - **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault path once, remembers it, always overwrites with the latest version. Run `/setup` first.
 
+**Rules:**
+
+- **`/rules`** — Choose which rules the main session follows: default `.pi` rules, or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Enforced via pi's native `AGENTS.override.md` slot in the project root (auto-restored on session start). `/setup` asks this once when a conflicting rules file exists; afterwards use `/rules`.
+
 **Memory config:**
 
 - `autoLog` — after read-only persona work, asks "Save to memory?" (default ON)
