@@ -339,80 +339,67 @@ const AGENT_SPECS: Record<
   "worrie-coder.md": {
     skill: "coder",
     tools: "read, grep, find, ls, bash, write, edit",
-    memoryProtocol: `## Memory Protocol (MANDATORY)
-- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
-- You may write to ANY memory file as relevant to the task:
-  - \`err\` -> .pi/memory/error_memory.md (ERR-NNN)
-  - \`code\` -> .pi/memory/codebase_map.md (follow its layer format: FN-FE / FILE-FE / DB / STG / SVC / DEP / OPS)
-  - \`impl\` -> .pi/memory/implementation_memory.md (FLOW-NNN)
-  - \`sec\` -> .pi/memory/security_memory.md (SEC-NNN)
-  - \`rev\` -> .pi/memory/review_memory.md (REVIEW-NNN)
-  - \`test\` -> .pi/memory/test_memory.md (TEST-NNN)
-  - \`proj\` -> .pi/rules/project_memory.md
-- New entries go to the TOP of Section 1 (LIFO), with format:
-  \`### [FLOW-004] Short Title\` followed by structured bullet fields.
-- STRICT ID RULES: always square brackets + 3-digit zero-padded number ([ERR-001], [FLOW-007], [REVIEW-012], [SEC-003], [TEST-002]). Never omit brackets, never drop padding.
-- NEVER delete, truncate, or rewrite existing entries.
+    memoryProtocol: `## Memory Protocol
+- BAN edit rule files. State → memory only.
+- § \`.clinerules\` §Memory Workflow for commands.
+- Write: err→error_memory.md (ERR-NNN), code→codebase_map.md, impl→implementation_memory.md (FLOW-NNN), sec→security_memory.md (SEC-NNN), rev→review_memory.md (REVIEW-NNN), test→test_memory.md (TEST-NNN), proj→project_memory.md
+- LIFO top of Section 1. ID: \`[TYPE-XXX]\` (3-digit zero-padded).
+- BAN delete/truncate Section 2 (immutable history).
+- On resolve → migrate SAME using \`### [RESOLVED] Title (TYPE-XXX)\`.
 `,
   },
   "worrie-debugger.md": {
     skill: "debugger",
     tools: "read, grep, find, ls, bash, write, edit",
-    memoryProtocol: `## Memory Protocol (MANDATORY)
-- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
-- DEFAULT: log to \`.pi/memory/error_memory.md\` (ERR-NNN).
-  - Active blockers -> Section 1, LIFO top: \`### [ERR-NNN] Short Title\`
-  - Fixed bugs -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (ERR-NNN)\` keeping the original number.
-- When the user explicitly asks, you may also write ANY other memory file (code, impl, sec, rev, test, proj).
-- NEVER delete, truncate, or rewrite entries in Section 2.
+    memoryProtocol: `## Memory Protocol
+- BAN edit rule files. State → memory only.
+- DEFAULT: log to error_memory.md (ERR-NNN).
+- Active blockers → Section 1 LIFO top: \`### [ERR-NNN] Title\`
+- Fixed bugs → SAME response, move to Section 2: \`### [RESOLVED] Title (ERR-NNN)\`
+- When explicitly asked, may write other memory files (code, impl, sec, rev, test, proj).
+- BAN delete/truncate Section 2 (immutable history).
 `,
   },
   "worrie-orchestrator.md": {
     skill: "orchestrator",
     tools: "read, grep, find, ls, bash, write, edit, subagent, subagent_wait",
-    memoryProtocol: `## Memory Protocol (MANDATORY)
-- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
-- Write to whichever memory file matches the persona/stage currently executing:
-  - PLAN/DOCUMENT -> impl + proj
-  - CODE -> impl
-  - TEST -> test
-  - DEBUG -> err
-  - SECURE -> sec
-  - REVIEW -> rev
-- New entries go to the TOP of Section 1 (LIFO). NEVER delete existing entries.
+    memoryProtocol: `## Memory Protocol
+- BAN edit rule files. State → memory only.
+- Write to matching file per stage: PLAN/DOCUMENT→impl+proj, CODE→impl, TEST→test, DEBUG→err, SECURE→sec, REVIEW→rev
+- LIFO top of Section 1. BAN delete existing entries.
 `,
   },
   "worrie-reviewer.md": {
     skill: "reviewer",
     tools: "read, grep, find, ls, bash, write, edit",
-    memoryProtocol: `## Memory Protocol (MANDATORY)
-- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
-- Log findings to \`.pi/memory/review_memory.md\` (REVIEW-NNN):
-  - Active findings -> Section 1, LIFO top: \`### [REVIEW-NNN] Short Title\`
-  - Resolved findings -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (REVIEW-NNN)\` keeping the original number.
-- NEVER delete, truncate, or rewrite entries in Section 2.
+    memoryProtocol: `## Memory Protocol
+- BAN edit rule files. State → memory only.
+- Log findings to review_memory.md (REVIEW-NNN):
+- Active → Section 1 LIFO top: \`### [REVIEW-NNN] Title\`
+- Resolved → SAME response, move to Section 2: \`### [RESOLVED] Title (REVIEW-NNN)\`
+- BAN delete/truncate Section 2.
 `,
   },
   "worrie-secure.md": {
     skill: "secure",
     tools: "read, grep, find, ls, bash, write, edit",
-    memoryProtocol: `## Memory Protocol (MANDATORY)
-- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
-- Log vulnerabilities to \`.pi/memory/security_memory.md\` (SEC-NNN):
-  - Active -> Section 1, LIFO top: \`### [SEC-NNN] Short Title (SEVERITY)\`
-  - Patched -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (SEC-NNN)\` and update the Overall Security Score.
-- NEVER delete, truncate, or rewrite entries in Section 2.
+    memoryProtocol: `## Memory Protocol
+- BAN edit rule files. State → memory only.
+- Log vulnerabilities to security_memory.md (SEC-NNN):
+- Active → Section 1 LIFO top: \`### [SEC-NNN] Title (SEVERITY)\`
+- Patched → SAME response, move to Section 2: \`### [RESOLVED] Title (SEC-NNN)\` + update Overall Security Score
+- BAN delete/truncate Section 2.
 `,
   },
   "worrie-tester.md": {
     skill: "tester",
     tools: "read, grep, find, ls, bash, write, edit",
-    memoryProtocol: `## Memory Protocol (MANDATORY)
-- **Precedence**: This protocol OVERRIDES any conflicting memory instructions in the persona section above. Flag-gated rules (-error/-setup/-context) are for the main session and do NOT apply to subagents.
-- Log strategies to \`.pi/memory/test_memory.md\` (TEST-NNN):
-  - Active -> Section 1, LIFO top: \`### [TEST-NNN] Short Title\`
-  - Resolved -> SAME response, move to Section 2: \`### [RESOLVED] Short Title (TEST-NNN)\` keeping the original number.
-- NEVER delete, truncate, or rewrite entries in Section 2.
+    memoryProtocol: `## Memory Protocol
+- BAN edit rule files. State → memory only.
+- Log strategies to test_memory.md (TEST-NNN):
+- Active → Section 1 LIFO top: \`### [TEST-NNN] Title\`
+- Resolved → SAME response, move to Section 2: \`### [RESOLVED] Title (TEST-NNN)\`
+- BAN delete/truncate Section 2.
 `,
   },
 };
@@ -702,6 +689,134 @@ function showMemory(ctx: any, type: string, opt: string): void {
     })
     .join("\n");
   ctx.ui.notify(`${t.title ?? type} (${list.length} shown):\n${out}`, "info");
+}
+
+// ── New /m workflow helpers ──
+
+/** Resolve entry by ID across all memory files (AI-free). */
+function resolveEntry(ctx: any, id: string): void {
+  const idUpper = id.toUpperCase();
+  let found = false;
+  for (const [type, t] of Object.entries(MEMORY_TYPES)) {
+    if (!t.prefix) continue;
+    const file = memPath(type);
+    if (!file || !existsSync(file)) continue;
+    const content = readFileSync(file, "utf8");
+    const lines = content.split("\n");
+    // Find in Section 1 (active)
+    const start = lines.findIndex((l) => l.startsWith(`### [${idUpper}] `));
+    if (start === -1) continue;
+    // Check it's in Section 1, not Section 2
+    const sec1End = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
+    if (sec1End === -1) continue; // not in Section 1
+    // Find end of this entry block
+    let end = lines.findIndex((l, i) => i > start && /^#{3,4} \[/.test(l));
+    if (end === -1) {
+      end = sec1End;
+    }
+    const block = lines.slice(start, end);
+    const title = block[0].replace(`### [${idUpper}] `, "");
+    block[0] = `### [RESOLVED] ${title} (${idUpper})`;
+    // Move to Section 2
+    let sec2 = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
+    if (sec2 === -1) sec2 = sec1End;
+    let ins = sec2 + 1;
+    while (ins < lines.length && (lines[ins].trim() === "" || lines[ins].startsWith("_") || lines[ins].startsWith(">"))) ins++;
+    lines.splice(start, end - start);
+    lines.splice(ins, 0, ...block, "");
+    writeFileSync(file, lines.join("\n"));
+    ctx.ui.notify(`Resolved ${idUpper} → Section 2 (${t.file})`, "info");
+    found = true;
+    break;
+  }
+  if (!found) ctx.ui.notify(`Entry ${idUpper} not found in active section.`, "warning");
+}
+
+/** Build table for a single memory file. */
+function buildTable(ctx: any, type: string, flag: string): void {
+  const t = MEMORY_TYPES[type];
+  const file = memPath(type);
+  if (!file || !existsSync(file)) {
+    ctx.ui.notify(`Memory file for "${type}" missing. Run /setup first.`, "warning");
+    return;
+  }
+  const content = readFileSync(file, "utf8");
+  const raw = content.split("\n###").slice(1).map((b) => "###" + b);
+  const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
+  const entries = blocks.filter((b) => /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b));
+  let list = entries;
+  if (flag === "--active") list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
+  else if (flag === "--resolved") list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
+  else if (flag === "--all") list = entries;
+  else if (flag === "--count") {
+    const active = entries.filter((b) => !b.startsWith("### [RESOLVED]")).length;
+    const resolved = entries.filter((b) => b.startsWith("### [RESOLVED]")).length;
+    ctx.ui.notify(`${type}: open ${active}  resolved ${resolved}  total ${active + resolved}`, "info");
+    return;
+  }
+  if (list.length === 0) {
+    ctx.ui.notify(`No entries for ${type}.`, "info");
+    return;
+  }
+  // Format as table
+  const rows = list.map((b) => {
+    const head = b.split("\n")[0];
+    const status = b.startsWith("### [RESOLVED]") ? "RESOLVED" : "OPEN";
+    // Extract ID and title
+    const match = head.match(/^### \[([^\]]+)\] (.+)/);
+    const id = match ? `[${match[1]}]` : head.slice(0, 12).padEnd(12);
+    const title = match ? match[2].slice(0, 40).padEnd(40) : head.slice(12).padEnd(40);
+    return `| ${id} | ${title} | ${status} |`;
+  });
+  const header = `| ID | Title | Status |\n|----|-------|--------|`;
+  ctx.ui.notify(`/ml ${type} (${list.length} entries)\n${header}\n${rows.join("\n")}`, "info");
+}
+
+/** Build cross-file table overview. */
+function buildCrossFileTable(ctx: any, flag: string): void {
+  const allEntries: Array<{ file: string; id: string; title: string; status: string }> = [];
+  for (const [type, t] of Object.entries(MEMORY_TYPES)) {
+    if (!t.prefix) continue;
+    const file = memPath(type);
+    if (!file || !existsSync(file)) continue;
+    const content = readFileSync(file, "utf8");
+    const raw = content.split("\n###").slice(1).map((b) => "###" + b);
+    const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
+    const entries = blocks.filter((b) => /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b));
+    let list = entries;
+    if (flag === "--active") list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
+    else if (flag === "--resolved") list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
+    else if (flag === "--count") {
+      const active = entries.filter((b) => !b.startsWith("### [RESOLVED]")).length;
+      const resolved = entries.filter((b) => b.startsWith("### [RESOLVED]")).length;
+      ctx.ui.notify(`${t.file}: open ${active}  resolved ${resolved}`, "info");
+      continue;
+    }
+    for (const b of list) {
+      const head = b.split("\n")[0];
+      const status = b.startsWith("### [RESOLVED]") ? "RESOLVED" : "OPEN";
+      const match = head.match(/^#{3,4} \[([^\]]+)\] (.+)/);
+      if (match) {
+        allEntries.push({
+          file: t.file,
+          id: `[${match[1]}]`,
+          title: match[2].slice(0, 35),
+          status,
+        });
+      }
+    }
+  }
+  if (allEntries.length === 0) {
+    ctx.ui.notify("No entries found.", "info");
+    return;
+  }
+  // Format as table (max 20 rows)
+  const rows = allEntries.slice(0, 20).map((e) =>
+    `| ${e.file.padEnd(20)} | ${e.id.padEnd(10)} | ${e.title.padEnd(35)} | ${e.status} |`,
+  );
+  const header = `| File | ID | Title | Status |\n|------|----|-------|--------|`;
+  const extra = allEntries.length > 20 ? `\n... and ${allEntries.length - 20} more` : "";
+  ctx.ui.notify(`/mlist (${flag}) ${allEntries.length} entries total${extra}\n${header}\n${rows.join("\n")}`, "info");
 }
 
 function resolveMemory(ctx: any, type: string, id: string): void {
@@ -1216,10 +1331,9 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── /memory ──
-  pi.registerCommand("memory", {
-    description:
-      "Memory management: log, show, list, resolve, edit, search, archive, config",
+  // ── /m <type> "msg" — create entry ──
+  pi.registerCommand("m", {
+    description: "Memory: log, resolve, view, list",
     getArgumentCompletions: (prefix: string) => {
       const text = prefix ?? "";
       const parts = text.split(/\s+/);
@@ -1235,293 +1349,176 @@ export default function (pi: ExtensionAPI) {
         return f.length > 0 ? f : null;
       };
 
-      const SUBCOMMANDS = [
-        {
-          value: "log",
-          label: "log",
-          description: "Create a new memory entry",
-        },
-        { value: "show", label: "show", description: "View memory entries" },
-        {
-          value: "list",
-          label: "list",
-          description: "All memory files with open/resolved counts",
-        },
-        {
-          value: "resolve",
-          label: "resolve",
-          description: "Move entry to Section 2 as RESOLVED",
-        },
-        {
-          value: "edit",
-          label: "edit",
-          description: "Edit a field in an entry",
-        },
-        { value: "search", label: "search", description: "Search entries" },
-        {
-          value: "archive",
-          label: "archive",
-          description: "Archive overflow entries",
-        },
-        { value: "config", label: "config", description: "Memory settings" },
-      ];
-      const TYPES = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
+      const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
         value: key,
         label: key,
         description: `${t.title} -> .pi/${t.file}`,
       }));
-      const typeKeys = Object.keys(MEMORY_TYPES);
 
-      const sub = done[0];
-      if (!sub) return filter(SUBCOMMANDS, current);
-      if (!SUBCOMMANDS.some((s) => s.value === sub))
-        return filter(SUBCOMMANDS, current);
-
-      if (sub === "log" || sub === "search") {
-        if (done.length === 1) return filter(TYPES, current);
-        return null; // free-text message
+      if (done.length === 0) return filter([{ value: "r", label: "r", description: "Resolve entry by ID" }], current);
+      if (done[0] === "r") {
+        const ids = memoryEntryIds(Object.keys(MEMORY_TYPES)[0], false).slice(0, 20);
+        return filter(ids.map((id) => ({ value: id, label: id, description: `Entry ${id}` })), current);
       }
-      if (sub === "show" || sub === "resolve" || sub === "edit") {
-        if (done.length === 1) return filter(TYPES, current);
-        const type = done[1];
-        if (!typeKeys.includes(type)) return null;
-        if (sub === "show") {
-          const flags = [
-            {
-              value: "--all",
-              label: "--all",
-              description: "All entries (active + resolved)",
-            },
-            {
-              value: "--open",
-              label: "--open",
-              description: "Active entries only",
-            },
-            {
-              value: "--resolved",
-              label: "--resolved",
-              description: "Resolved entries only",
-            },
-          ];
-          const ids = memoryEntryIds(type, true).map((id) => ({
-            value: id,
-            label: id,
-            description: `Entry ${id}`,
-          }));
-          return filter([...flags, ...ids], current);
-        }
-        const ids = memoryEntryIds(type, sub === "edit").map((id) => ({
-          value: id,
-          label: id,
-          description: `Entry ${id}`,
-        }));
-        return filter(ids, current);
-      }
-      if (sub === "list" || sub === "archive") return null; // no more args
-      if (sub === "config") {
-        if (done.length === 1) {
-          return filter(
-            [
-              {
-                value: "autoLog",
-                label: "autoLog",
-                description: "Ask before saving after read-only work",
-              },
-              {
-                value: "promptOnBlock",
-                label: "promptOnBlock",
-                description: "Show BLOCKED status on write attempts",
-              },
-              {
-                value: "maxEntries",
-                label: "maxEntries",
-                description: "Archive threshold (number)",
-              },
-              {
-                value: "reset",
-                label: "reset",
-                description: "Restore defaults",
-              },
-            ],
-            current,
-          );
-        }
-        if (done[1] === "autoLog" || done[1] === "promptOnBlock") {
-          return filter(
-            [
-              { value: "true", label: "true", description: "Enable" },
-              { value: "false", label: "false", description: "Disable" },
-            ],
-            current,
-          );
-        }
-        return null; // maxEntries expects a number, reset takes nothing
-      }
+      const type = done[0];
+      if (!MEMORY_TYPES[type]) return filter([{ value: "r", label: "r", description: "Resolve entry by ID" }], current);
       return null;
     },
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/);
-      const sub = parts[0] ?? "";
+      const cmd = parts[0];
       const rest = parts.slice(1);
 
-      switch (sub) {
-        case "log": {
-          const type = rest[0];
-          let message = rest.slice(1).join(" ").trim();
-          if (message.startsWith('"') && message.endsWith('"'))
-            message = message.slice(1, -1);
-          if (!MEMORY_TYPES[type] || !message) {
-            ctx.ui.notify(
-              'Usage: /memory log <err|code|impl|sec|rev|test|proj> "message"',
-              "warning",
-            );
-            return;
-          }
-          logMemory(ctx, type, message);
+      if (cmd === "r") {
+        // /m r <id> — resolve entry manually (AI-free)
+        const id = (rest[0] ?? "").toUpperCase();
+        if (!id) {
+          ctx.ui.notify("Usage: /m r <ERR-XXX | SEC-XXX | REV-XXX | TEST-XXX>", "warning");
           return;
         }
-        case "show": {
-          const type = rest[0];
-          const opt = rest[1] ?? "";
-          if (!MEMORY_TYPES[type]) {
-            ctx.ui.notify(
-              "Usage: /memory show <err|code|impl|sec|rev|test|proj> [n|--all|--open|--resolved|ID]",
-              "warning",
-            );
-            return;
-          }
-          showMemory(ctx, type, opt);
-          return;
-        }
-        case "list": {
-          const rows = Object.entries(MEMORY_TYPES).map(([key, t]) => {
-            const path = join(MEMORY_DIR, t.file);
-            if (!existsSync(path))
-              return `${key.padEnd(4)} ${t.title.padEnd(14)} (missing)`;
-            const content = readFileSync(path, "utf8");
-            const blocks = content
-              .split("\n### ")
-              .slice(1)
-              .map((b) => "### " + b);
-            const total = blocks.filter((b) =>
-              /^### \[(RESOLVED\] |[A-Z]+-\d+\])/.test(b),
-            ).length;
-            const resolved = blocks.filter((b) =>
-              b.startsWith("### [RESOLVED]"),
-            ).length;
-            return `${key.padEnd(4)} ${t.title.padEnd(14)} open: ${total - resolved}  resolved: ${resolved}  total: ${total}`;
-          });
-          ctx.ui.notify(`Memory files:\n${rows.join("\n")}`, "info");
-          return;
-        }
-        case "resolve": {
-          const type = rest[0];
-          const id = (rest[1] ?? "").toUpperCase();
-          if (!MEMORY_TYPES[type] || !id) {
-            ctx.ui.notify("Usage: /memory resolve <type> <ID>", "warning");
-            return;
-          }
-          resolveMemory(ctx, type, id);
-          return;
-        }
-        case "edit": {
-          const type = rest[0];
-          const id = (rest[1] ?? "").toUpperCase();
-          const remainder = rest
-            .slice(2)
-            .join(" ")
-            .replace(/^"/, "")
-            .replace(/"$/, "")
-            .trim();
-          const fm = remainder.match(/^([A-Za-z ]+):\s*(.+)$/);
-          if (!MEMORY_TYPES[type] || !id || !fm) {
-            ctx.ui.notify(
-              'Usage: /memory edit <type> <ID> "Field: value"',
-              "warning",
-            );
-            return;
-          }
-          editMemory(ctx, type, id, fm[1].trim(), fm[2].trim());
-          return;
-        }
-        case "search": {
-          const type = rest[0];
-          const query = rest.slice(1).join(" ").replace(/^"|"$/g, "").trim();
-          if (!MEMORY_TYPES[type] || !query) {
-            ctx.ui.notify("Usage: /memory search <type> <query>", "warning");
-            return;
-          }
-          searchMemory(ctx, type, query);
-          return;
-        }
-        case "archive": {
-          archiveMemory(ctx);
-          return;
-        }
-        case "config": {
-          const key = rest[0];
-          const value = rest[1];
-          if (!key) {
-            showConfig(ctx);
-            return;
-          }
-          if (key === "autoLog" && (value === "true" || value === "false")) {
-            memoryConfig.autoLog = value === "true";
-            pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-            ctx.ui.setStatus(
-              "worrie-memory",
-              `[MEM] auto-log ${memoryConfig.autoLog ? "ON" : "OFF"}`,
-            );
-            ctx.ui.notify(
-              `autoLog ${memoryConfig.autoLog ? "ON" : "OFF"} - ${memoryConfig.autoLog ? "I will ask before saving" : "save manually with /memory log"}`,
-              "info",
-            );
-            return;
-          }
-          if (
-            key === "promptOnBlock" &&
-            (value === "true" || value === "false")
-          ) {
-            memoryConfig.promptOnBlock = value === "true";
-            pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-            ctx.ui.notify(
-              `promptOnBlock ${memoryConfig.promptOnBlock ? "ON" : "OFF"}`,
-              "info",
-            );
-            return;
-          }
-          if (key === "maxEntries" && /^\d+$/.test(value ?? "")) {
-            memoryConfig.maxEntries = parseInt(value!, 10);
-            pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-            ctx.ui.notify(
-              `Archive threshold set to ${memoryConfig.maxEntries} entries`,
-              "info",
-            );
-            return;
-          }
-          if (key === "reset") {
-            memoryConfig = {
-              autoLog: true,
-              promptOnBlock: true,
-              maxEntries: 10,
-            };
-            pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-            ctx.ui.setStatus("worrie-memory", "[MEM] auto-log ON");
-            ctx.ui.notify("Memory config reset to defaults", "info");
-            return;
-          }
-          ctx.ui.notify(
-            "Usage: /memory config [autoLog true|false] [promptOnBlock true|false] [maxEntries N] [reset]",
-            "warning",
-          );
-          return;
-        }
-        default:
-          ctx.ui.notify(
-            "Usage: /memory <log|show|list|resolve|edit|search|archive|config> ...",
-            "warning",
-          );
+        resolveEntry(ctx, id);
+        return;
       }
+
+      // /m <type> "message" — log entry
+      const type = cmd;
+      let message = rest.join(" ").replace(/^"/, "").replace(/"$/, "").trim();
+      if (!MEMORY_TYPES[type] || !message) {
+        ctx.ui.notify('Usage: /m <err|sec|rev|test|impl|code|proj> "message"', "warning");
+        return;
+      }
+      logMemory(ctx, type, message);
+    },
+  });
+
+  // ── /ml <type> [--active|--resolved|--all|--count] ──
+  pi.registerCommand("ml", {
+    description: "View memory entries as table",
+    getArgumentCompletions: (prefix: string) => {
+      const text = prefix ?? "";
+      const parts = text.split(/\s+/);
+      const isAtEnd = text.endsWith(" ");
+      const done = isAtEnd ? parts.filter(Boolean) : parts.slice(0, -1);
+      const current = isAtEnd ? "" : parts[parts.length - 1];
+
+      const filter = (
+        items: { value: string; label: string; description?: string }[],
+        tok: string,
+      ) => items.filter((i) => i.value.startsWith(tok));
+
+      const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
+        value: key,
+        label: key,
+        description: `${t.title} -> .pi/${t.file}`,
+      }));
+
+      if (done.length === 0) return filter(types, current);
+      const type = done[0];
+      if (!MEMORY_TYPES[type]) return null;
+      const flags = ["--active", "--resolved", "--all", "--count"];
+      if (done.length === 1) return filter(flags.map((f) => ({ value: f, label: f, description: f })), current);
+      return null;
+    },
+    handler: (args, ctx) => {
+      const parts = (args ?? "").trim().split(/\s+/);
+      const type = parts[0];
+      const flag = parts[1] ?? "--active";
+      if (!MEMORY_TYPES[type]) {
+        ctx.ui.notify("Usage: /ml <err|sec|rev|test|impl|code|proj> [--active|--resolved|--all|--count]", "warning");
+        return;
+      }
+      buildTable(ctx, type, flag);
+    },
+  });
+
+  // ── /mlist [--active|--resolved|--all|--count] ──
+  pi.registerCommand("mlist", {
+    description: "Cross-file memory overview",
+    getArgumentCompletions: (prefix: string) => {
+      const text = prefix ?? "";
+      const parts = text.split(/\s+/);
+      const isAtEnd = text.endsWith(" ");
+      const current = isAtEnd ? "" : parts[parts.length - 1];
+      const flags = ["--active", "--resolved", "--all", "--count"];
+      return flags.filter((f) => f.startsWith(current)).map((f) => ({ value: f, label: f, description: f }));
+    },
+    handler: (args, ctx) => {
+      const flag = (args?.trim() ?? "--active").replace(/^\s*/, "");
+      buildCrossFileTable(ctx, flag);
+    },
+  });
+
+  // ── /memory archive ──
+  pi.registerCommand("archive", {
+    description: "Archive overflow memory entries",
+    handler: (args, ctx) => {
+      archiveMemory(ctx);
+    },
+  });
+
+  // ── /memory config ──
+  pi.registerCommand("config", {
+    description: "Memory configuration settings",
+    getArgumentCompletions: (prefix: string) => {
+      const text = prefix ?? "";
+      const parts = text.split(/\s+/);
+      const isAtEnd = text.endsWith(" ");
+      const done = isAtEnd ? parts.filter(Boolean) : parts.slice(0, -1);
+      const current = isAtEnd ? "" : parts[parts.length - 1];
+
+      const filter = (items: { value: string; label: string }[], tok: string) =>
+        items.filter((i) => i.value.startsWith(tok));
+
+      if (done.length === 0) {
+        return filter([
+          { value: "autoLog", label: "autoLog" },
+          { value: "promptOnBlock", label: "promptOnBlock" },
+          { value: "maxEntries", label: "maxEntries" },
+          { value: "reset", label: "reset" },
+        ], current);
+      }
+      const key = done[0];
+      if (key === "autoLog" || key === "promptOnBlock") {
+        return [{ value: "true", label: "true" }, { value: "false", label: "false" }].filter((i) => i.value.startsWith(current));
+      }
+      if (key === "maxEntries") return null;
+      return [];
+    },
+    handler: async (args, ctx) => {
+      const parts = (args ?? "").trim().split(/\s+/);
+      const key = parts[0];
+      const value = parts[1];
+      if (!key) {
+        showConfig(ctx);
+        return;
+      }
+      if (key === "autoLog" && (value === "true" || value === "false")) {
+        memoryConfig.autoLog = value === "true";
+        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
+        ctx.ui.setStatus("worrie-memory", `[MEM] auto-log ${memoryConfig.autoLog ? "ON" : "OFF"}`);
+        ctx.ui.notify(`autoLog ${memoryConfig.autoLog ? "ON" : "OFF"} - ${memoryConfig.autoLog ? "I will ask before saving" : "save manually with /m"}`, "info");
+        return;
+      }
+      if (key === "promptOnBlock" && (value === "true" || value === "false")) {
+        memoryConfig.promptOnBlock = value === "true";
+        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
+        ctx.ui.notify(`promptOnBlock ${memoryConfig.promptOnBlock ? "ON" : "OFF"}`, "info");
+        return;
+      }
+      if (key === "maxEntries" && /^\d+$/.test(value ?? "")) {
+        memoryConfig.maxEntries = parseInt(value!, 10);
+        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
+        ctx.ui.notify(`Archive threshold set to ${memoryConfig.maxEntries} entries`, "info");
+        return;
+      }
+      if (key === "reset") {
+        memoryConfig = { autoLog: true, promptOnBlock: true, maxEntries: 10 };
+        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
+        ctx.ui.setStatus("worrie-memory", "[MEM] auto-log ON");
+        ctx.ui.notify("Memory config reset to defaults", "info");
+        return;
+      }
+      ctx.ui.notify("Usage: /memory config [autoLog|promptOnBlock|maxEntries|reset] [value]", "warning");
     },
   });
 

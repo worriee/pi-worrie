@@ -49,16 +49,14 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 **Memory:**
 
-| Command                                                         | What it does                                   |
-| --------------------------------------------------------------- | ---------------------------------------------- |
-| `/memory log <err\|code\|impl\|sec\|rev\|test\|proj> "message"` | Create entry, auto-assign next tracking number |
-| `/memory show <type> [n\|--all\|--open\|--resolved\|ID]`        | View entries                                   |
-| `/memory list`                                                  | All memory files with open/resolved counts     |
-| `/memory resolve <type> <ID>`                                   | Move entry to Section 2 as RESOLVED            |
-| `/memory edit <type> <ID> "Field: value"`                       | Update a field                                 |
-| `/memory search <type> <query>`                                 | Search entries                                 |
-| `/memory archive`                                               | Archive overflow (threshold: 10, configurable) |
-| `/memory config [autoLog\|promptOnBlock\|maxEntries\|reset]`    | Toggle auto-log prompts, set archive threshold |
+| Command                                          | What it does                                   |
+| ------------------------------------------------ | ---------------------------------------------- |
+| `/m <err\|sec\|rev\|test\|impl\|code\|proj> "msg"` | Create entry, auto-assign next tracking number |
+| `/m r <ERR-XXX \| SEC-XXX \| ...>`                | Resolve entry manually (AI-free)               |
+| `/ml <type> [--active\|--resolved\|--all\|--count]` | View entries as table                          |
+| `/mlist [--active\|--resolved\|--all\|--count]`   | Cross-file overview table                      |
+| `/archive`                                        | Archive overflow (threshold: 10, configurable) |
+| `/config [autoLog\|promptOnBlock\|maxEntries\|reset]` | Toggle settings               |
 
 Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (implementation_memory.md), `sec` (security_memory.md), `rev` (review_memory.md), `test` (test_memory.md), `proj` (project_memory.md). Entries use LIFO ordering, `### [RESOLVED] Title (ERR-XXX)` migration, and history is never deleted.
 
