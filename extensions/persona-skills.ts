@@ -78,25 +78,6 @@ function nextTrackingId(content: string, prefix: string): string {
   return `${prefix}-${String(max + 1).padStart(3, "0")}`;
 }
 
-function memoryEntryIds(type: string, includeResolved: boolean): string[] {
-  const file = memPath(type);
-  if (!file || !existsSync(file)) return [];
-  const ids: string[] = [];
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    if (!/^#{3,4} \[/.test(line)) continue;
-    const active = line.match(/^#{3,4} \[([A-Z]+(?:-[A-Z]+)*-\d+)\]/);
-    if (active) {
-      ids.push(active[1]);
-      continue;
-    }
-    const resolved = line.match(
-      /^#{3,4} \[RESOLVED\][^\n]*\(([A-Z]+(?:-[A-Z]+)*-\d+)\)/,
-    );
-    if (resolved && includeResolved) ids.push(resolved[1]);
-  }
-  return ids;
-}
-
 // ===================================================================
 // Rules source (pi rules vs AGENTS.md/CLAUDE.md)
 // ===================================================================
@@ -569,9 +550,7 @@ const MEMORY_TEMPLATES: Record<string, string> = {
 
 const ARCHIVE_TEMPLATES: Record<string, string> = {
   "error_archive.md": loadArchiveTemplate("error_archive.md"),
-  "implementation_archive.md": loadArchiveTemplate(
-    "implementation_archive.md",
-  ),
+  "implementation_archive.md": loadArchiveTemplate("implementation_archive.md"),
   "review_archive.md": loadArchiveTemplate("review_archive.md"),
   "security_archive.md": loadArchiveTemplate("security_archive.md"),
   "test_archive.md": loadArchiveTemplate("test_archive.md"),
@@ -648,7 +627,9 @@ function resolveEntry(ctx: any, id: string): void {
     const lines = content.split("\n");
     const start = lines.findIndex((l) => l.startsWith(`### [${idUpper}] `));
     if (start === -1) continue;
-    const sec1End = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
+    const sec1End = lines.findIndex(
+      (l, i) => i > start && l.startsWith("## 2."),
+    );
     if (sec1End === -1) continue;
     let end = lines.findIndex((l, i) => i > start && /^#{3,4} \[/.test(l));
     if (end === -1) end = sec1End;
@@ -673,10 +654,7 @@ function resolveEntry(ctx: any, id: string): void {
     break;
   }
   if (!found)
-    ctx.ui.notify(
-      `Entry ${idUpper} not found in active section.`,
-      "warning",
-    );
+    ctx.ui.notify(`Entry ${idUpper} not found in active section.`, "warning");
 }
 
 function buildTable(ctx: any, type: string, flag: string): void {
@@ -799,9 +777,7 @@ function buildCrossFileTable(ctx: any, flag: string): void {
     );
   const header = `| File | ID | Title | Status |\n|------|----|-------|--------|`;
   const extra =
-    allEntries.length > 20
-      ? `\n... and ${allEntries.length - 20} more`
-      : "";
+    allEntries.length > 20 ? `\n... and ${allEntries.length - 20} more` : "";
   ctx.ui.notify(
     `/m list (${flag}) ${allEntries.length} entries total${extra}\n${header}\n${rows.join("\n")}`,
     "info",
@@ -1158,17 +1134,17 @@ export default function (pi: ExtensionAPI) {
         }
         const task = (args ?? "").trim();
         if (!task && name !== "a" && name !== "p") {
-          ctx.ui.notify(
-            `Usage: /${name} <task>`,
-            "warning",
-          );
+          ctx.ui.notify(`Usage: /${name} <task>`, "warning");
           return;
         }
         if (!savedTools) savedTools = pi.getActiveTools();
         activePersona = name;
         pi.setActiveTools(p.tools);
         const isAuto = name === "o" && task.toLowerCase().startsWith("auto ");
-        ctx.ui.setStatus("worrie-status", isAuto ? "[ORCH] automation running" : p.status);
+        ctx.ui.setStatus(
+          "worrie-status",
+          isAuto ? "[ORCH] automation running" : p.status,
+        );
         pi.appendEntry("worrie-persona", { persona: name, at: Date.now() });
         pi.sendUserMessage(p.delegation(task));
       },
@@ -1232,10 +1208,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("worrie-status", "[MEMORY] logging error...");
       const file = memPath("err");
       if (!existsSync(file)) {
-        ctx.ui.notify(
-          "error_memory.md missing. Run /setup first.",
-          "warning",
-        );
+        ctx.ui.notify("error_memory.md missing. Run /setup first.", "warning");
         ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
@@ -1260,10 +1233,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("worrie-status", "[MEMORY] mapping codebase...");
       const file = memPath("code");
       if (!existsSync(file)) {
-        ctx.ui.notify(
-          "codebase_map.md missing. Run /setup first.",
-          "warning",
-        );
+        ctx.ui.notify("codebase_map.md missing. Run /setup first.", "warning");
         ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
@@ -1286,13 +1256,14 @@ export default function (pi: ExtensionAPI) {
 
   // ── /m — unified memory command ──
   pi.registerCommand("m", {
-    description: "Memory: log, resolve, list, config",
+    description: "Memory: list, resolve, config",
     getArgumentCompletions: (prefix: string) => {
       const text = prefix ?? "";
-      const parts = text.split(/\s+/);
-      const isAtEnd = text.endsWith(" ");
-      const done = isAtEnd ? parts.filter(Boolean) : parts.slice(0, -1);
-      const current = isAtEnd ? "" : parts[parts.length - 1];
+      // (applyCompletion: beforePrefix + item.value, prefix = full arg text) then auto-submits.
+      // Completing a 2nd+ token wipes earlier tokens (/m list err -> /m err). Only
+      // single-token completions are safe.
+      if (text.includes(" ")) return null;
+      const current = text.split(/\s+/).pop() ?? "";
 
       const filter = (
         items: { value: string; label: string; description?: string }[],
@@ -1302,89 +1273,18 @@ export default function (pi: ExtensionAPI) {
         return f.length > 0 ? f : null;
       };
 
-      if (done.length === 0)
-        return filter(
-          [
-            { value: "list", label: "list", description: "List memory entries" },
-            {
-              value: "resolve",
-              label: "resolve",
-              description: "Resolve entry by ID",
-            },
-            { value: "config", label: "config", description: "Show/set config" },
-          ],
-          current,
-        );
-
-      if (done[0] === "list") {
-        const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
-          value: key,
-          label: key,
-          description: `${t.title} -> .pi/${t.file}`,
-        }));
-        if (done.length === 1)
-          return filter(
-            [
-              ...types,
-              {
-                value: "--active",
-                label: "--active",
-                description: "Active entries only",
-              },
-              {
-                value: "--resolved",
-                label: "--resolved",
-                description: "Resolved entries only",
-              },
-              { value: "--all", label: "--all", description: "All entries" },
-              {
-                value: "--count",
-                label: "--count",
-                description: "Count only",
-              },
-            ],
-            current,
-          );
-        return null;
-      }
-
-      if (done[0] === "resolve") {
-        const ids = memoryEntryIds(
-          Object.keys(MEMORY_TYPES)[0],
-          false,
-        ).slice(0, 20);
-        return filter(
-          ids.map((id) => ({ value: id, label: id, description: `Entry ${id}` })),
-          current,
-        );
-      }
-
-      if (done[0] === "config") {
-        return filter(
-          [
-            {
-              value: "promptOnBlock",
-              label: "promptOnBlock",
-              description: "Prompt on blocked tool",
-            },
-            {
-              value: "maxEntries",
-              label: "maxEntries",
-              description: "Archive threshold",
-            },
-            { value: "reset", label: "reset", description: "Reset defaults" },
-          ],
-          current,
-        );
-      }
-
-      // logging mode: /m <type> <msg>
-      const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
-        value: key,
-        label: key,
-        description: `${t.title} -> .pi/${t.file}`,
-      }));
-      return filter(types, current);
+      return filter(
+        [
+          { value: "list", label: "list", description: "List memory entries" },
+          {
+            value: "resolve",
+            label: "resolve",
+            description: "Resolve entry by ID",
+          },
+          { value: "config", label: "config", description: "Show/set config" },
+        ],
+        current,
+      );
     },
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/);
@@ -1430,7 +1330,10 @@ export default function (pi: ExtensionAPI) {
           showConfig(ctx);
           return;
         }
-        if (key === "promptOnBlock" && (value === "true" || value === "false")) {
+        if (
+          key === "promptOnBlock" &&
+          (value === "true" || value === "false")
+        ) {
           memoryConfig.promptOnBlock = value === "true";
           pi.appendEntry("worrie-memory-config", { ...memoryConfig });
           ctx.ui.notify(
@@ -1461,22 +1364,12 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // /m <type> "message" — log entry
-      const type = sub;
-      let message = rest.join(" ").replace(/^"/, "").replace(/"$/, "").trim();
-      if (!MEMORY_TYPES[type] || !message) {
-        ctx.ui.notify(
-          'Usage: /m <err|sec|rev|test|impl|code|proj> "message"',
-          "warning",
-        );
-        return;
-      }
-      ctx.ui.setStatus("worrie-status", "[MEMORY] logging...");
-      try {
-        logMemory(ctx, type, message);
-      } finally {
-        ctx.ui.setStatus("worrie-status", "[NORMAL]");
-      }
+      // /m <type> "message" logging was removed — the AI logs memory entries
+      // itself with its own tracking IDs (uveworkflow style).
+      ctx.ui.notify(
+        "Usage: /m list [type] [--active|--resolved|--all|--count] | /m resolve <ID> | /m config [key] [value]",
+        "warning",
+      );
     },
   });
 
@@ -1485,15 +1378,9 @@ export default function (pi: ExtensionAPI) {
     description: "View memory entries as table",
     getArgumentCompletions: (prefix: string) => {
       const text = prefix ?? "";
-      const parts = text.split(/\s+/);
-      const isAtEnd = text.endsWith(" ");
-      const done = isAtEnd ? parts.filter(Boolean) : parts.slice(0, -1);
-      const current = isAtEnd ? "" : parts[parts.length - 1];
-
-      const filter = (
-        items: { value: string; label: string; description?: string }[],
-        tok: string,
-      ) => items.filter((i) => i.value.startsWith(tok));
+      // on Enter, so only single-token completions are safe.
+      if (text.includes(" ")) return null;
+      const current = text.split(/\s+/).pop() ?? "";
 
       const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
         value: key,
@@ -1501,16 +1388,8 @@ export default function (pi: ExtensionAPI) {
         description: `${t.title} -> .pi/${t.file}`,
       }));
 
-      if (done.length === 0) return filter(types, current);
-      const type = done[0];
-      if (!MEMORY_TYPES[type]) return null;
-      const flags = ["--active", "--resolved", "--all", "--count"];
-      if (done.length === 1)
-        return filter(
-          flags.map((f) => ({ value: f, label: f, description: f })),
-          current,
-        );
-      return null;
+      const f = types.filter((i) => i.value.startsWith(current));
+      return f.length > 0 ? f : null;
     },
     handler: (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/);

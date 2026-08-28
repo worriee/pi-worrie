@@ -54,14 +54,13 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 | `/context`                                        | Prompt → update project_memory.md              |
 | `/error`                                          | Prompt → log to error_memory.md                |
 | `/codebase`                                       | Prompt → update codebase_map.md                |
-| `/m <err\|sec\|rev\|test\|impl\|code\|proj> "msg"` | Create entry, auto-assign next tracking number |
-| `/m resolve <ERR-XXX \| SEC-XXX \| ...>`           | Resolve entry manually (AI-free)               |
 | `/m list [type] [--active\|--resolved\|--all]`      | View entries as table                          |
+| `/m resolve <ERR-XXX \| SEC-XXX \| ...>`           | Resolve entry manually (AI-free)               |
 | `/ml [type] [--active\|--resolved\|--all]`          | Shorthand for `/m list`                        |
 | `/archive`                                        | Archive overflow (threshold: 10, configurable) |
 | `/m config [promptOnBlock\|maxEntries\|reset]`      | Toggle settings                                |
 
-Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (implementation_memory.md), `sec` (security_memory.md), `rev` (review_memory.md), `test` (test_memory.md), `proj` (project_memory.md). Entries use LIFO ordering, `### [RESOLVED] Title (ERR-XXX)` migration, and history is never deleted.
+Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (implementation_memory.md), `sec` (security_memory.md), `rev` (review_memory.md), `test` (test_memory.md), `proj` (project_memory.md). Logging is AI-managed — the AI itself appends new entries with its own tracking IDs (uveworkflow style). Entries use LIFO ordering, `### [RESOLVED] Title (ERR-XXX)` migration, and history is never deleted.
 
 **Utilities:**
 
