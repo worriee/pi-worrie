@@ -10,7 +10,6 @@ import {
   getAgentDir,
   parseFrontmatter,
 } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
 // ===================================================================
@@ -98,6 +97,7 @@ interface RunState {
 const runs = new Map<string, RunState>();
 let runCounter = 0;
 let sessionTrusted = false;
+let currentModelId: string | undefined;
 
 // ===================================================================
 // Agent discovery
@@ -288,6 +288,7 @@ function attachStreamParser(
   step: StepState,
   onText: (text: string) => void,
   onMessage: (message: any) => void,
+  errorRef?: { error?: string },
 ): void {
   let buffer = "";
   const processLine = (line: string) => {
@@ -310,6 +311,10 @@ function attachStreamParser(
     } else if (event.type === "message_end" && event.message) {
       onMessage(event.message);
       if (event.message.role === "assistant") {
+        if (event.message.stopReason === "error" && errorRef) {
+          errorRef.error = event.message.errorMessage || "Child model error";
+          note(step, `ERROR: ${errorRef.error}`, "result");
+        }
         for (const part of event.message.content ?? []) {
           if (part.type === "text" && part.text?.trim()) {
             const t = part.text;
@@ -356,6 +361,7 @@ async function runChild(
 ): Promise<{ exitCode: number; output: string; error?: string }> {
   const args = ["--mode", "json", "-p", "--no-session"];
   if (agent.model) args.push("--model", agent.model);
+  else if (currentModelId) args.push("--model", currentModelId);
   if (agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
   const taskPrompt = `${task}\n\nOUTPUT CONTRACT: End with a concise summary only: what was done, files changed, memory entries written (IDs). Keep the final response short. No full logs.`;
@@ -376,6 +382,7 @@ async function runChild(
   const invocation = getPiInvocation(args);
   let messages: any[] = [];
   let stderr = "";
+  const errorRef: { error?: string } = {};
 
   try {
     const exitCode = await new Promise<number>((resolve) => {
@@ -392,6 +399,7 @@ async function runChild(
         step,
         (text) => onOutput(text),
         (m) => messages.push(m),
+        errorRef,
       );
       proc.stderr.on("data", (data) => {
         stderr += data.toString();
@@ -420,6 +428,14 @@ async function runChild(
       Buffer.byteLength(finalText, "utf8") > MAX_OUTPUT_BYTES
         ? `${finalText.slice(0, MAX_OUTPUT_BYTES)}\n\n[Output truncated]`
         : finalText;
+    // Surface child errors even when exit code is 0 (pi -p exits 0 on model errors)
+    if (!output && errorRef.error) {
+      return {
+        exitCode: 1,
+        output: "",
+        error: errorRef.error.slice(0, 2000),
+      };
+    }
     return {
       exitCode,
       output,
@@ -754,6 +770,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
     ui = ctx.ui;
     sessionTrusted = trustAlways();
+    try { currentModelId = (ctx as any).model?.id; } catch { /* no model yet */ }
   });
 
   pi.on("session_shutdown", () => {
@@ -767,6 +784,10 @@ export default function (pi: ExtensionAPI) {
       }
     }
     runs.clear();
+  });
+
+  pi.on("model_select", (event) => {
+    try { currentModelId = event.model?.id; } catch { /* ignore */ }
   });
 
   // ── subagent tool ──

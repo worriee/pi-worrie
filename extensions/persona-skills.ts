@@ -259,20 +259,26 @@ const PERSONAS: Record<
     delegation: (task) => {
       if (task.toLowerCase().startsWith("auto ")) {
         const userTask = task.slice(5).trim();
-        return `Launch the subagent tool with a CHAIN of 11 steps for this task. Each step runs as a fresh subagent - do NOT do the work in this session. Set approval: true on steps 2 through 11 (the extension will ask the user before each step). Give each step a label like "1/11: PLAN". The chain steps are:
-1. worrie-planner - PLAN: produce a structured roadmap with clear steps
-2. worrie-coder - CODE: implement the approved plan (use {previous})
-3. worrie-tester - TEST: run typecheck, lint, unit, integration, E2E, coverage. Summarize pass/fail.
-4. worrie-debugger - DEBUG: fix any failures from {previous}, explain root causes
-5. worrie-secure - SECURE: OWASP scan of new code, score 0-10
-6. worrie-debugger - DEBUG: catch bugs introduced by security fixes
-7. worrie-tester - TEST: full pipeline again
-8. worrie-coder - CLEAN: report debug traces and dead code (safe removals only)
-9. worrie-reviewer - REVIEW: findings with severity
-10. worrie-coder - DOCUMENT: write summary to implementation_memory.md and project_memory.md
-11. ASK stage: after the chain finishes, present the final summary to the user and ask what's next.
+        return `Call the subagent tool ONCE with a chain. The chain parameter MUST be a JSON array of objects — never a stringified array. Do NOT do the work in this session. Use exactly this structure (TASK = the task below):
 
-Task: ${userTask}`;
+subagent({
+  chain: [
+    { agent: "worrie-planner", task: "PLAN: produce a structured roadmap with clear steps for: TASK", label: "1/11: PLAN" },
+    { agent: "worrie-coder", task: "CODE: implement the approved plan (use {previous}). TASK", label: "2/11: CODE", approval: true },
+    { agent: "worrie-tester", task: "TEST: run typecheck, lint, unit, integration, E2E, coverage. Summarize pass/fail.", label: "3/11: TEST", approval: true },
+    { agent: "worrie-debugger", task: "DEBUG: fix any failures from {previous}, explain root causes", label: "4/11: DEBUG", approval: true },
+    { agent: "worrie-secure", task: "SECURE: OWASP scan of new code, score 0-10", label: "5/11: SECURE", approval: true },
+    { agent: "worrie-debugger", task: "DEBUG: catch bugs introduced by security fixes", label: "6/11: DEBUG", approval: true },
+    { agent: "worrie-tester", task: "TEST: full pipeline again", label: "7/11: TEST", approval: true },
+    { agent: "worrie-coder", task: "CLEAN: report debug traces and dead code (safe removals only)", label: "8/11: CLEAN", approval: true },
+    { agent: "worrie-reviewer", task: "REVIEW: findings with severity", label: "9/11: REVIEW", approval: true },
+    { agent: "worrie-coder", task: "DOCUMENT: write summary to implementation_memory.md and project_memory.md", label: "10/11: DOCUMENT", approval: true }
+  ]
+})
+
+After the chain finishes, present the final summary to the user and ask what's next.
+
+TASK: ${userTask}`;
       }
       return `Launch the worrie-orchestrator subagent in AUTO-DETECT mode. It analyzes the user prompt and chooses the matching persona (coder, debugger, reviewer, secure, tester, ask logic). Do NOT do the work in this session. Present the concise summary.\n\nPrompt: ${task}`;
     },
@@ -1150,18 +1156,20 @@ export default function (pi: ExtensionAPI) {
           );
           return;
         }
+        const task = (args ?? "").trim();
+        if (!task && name !== "a" && name !== "p") {
+          ctx.ui.notify(
+            `Usage: /${name} <task>`,
+            "warning",
+          );
+          return;
+        }
         if (!savedTools) savedTools = pi.getActiveTools();
         activePersona = name;
         pi.setActiveTools(p.tools);
-        ctx.ui.setStatus("worrie-status", p.status);
-        if (p.delegating && p.agent) {
-          ctx.ui.setStatus(
-            "worrie-subagent",
-            `[SUBAGENT] ${p.agent} working...`,
-          );
-        }
+        const isAuto = name === "o" && task.toLowerCase().startsWith("auto ");
+        ctx.ui.setStatus("worrie-status", isAuto ? "[ORCH] automation running" : p.status);
         pi.appendEntry("worrie-persona", { persona: name, at: Date.now() });
-        const task = (args ?? "").trim();
         pi.sendUserMessage(p.delegation(task));
       },
     });
@@ -1177,7 +1185,6 @@ export default function (pi: ExtensionAPI) {
         savedTools = null;
       }
       ctx.ui.setStatus("worrie-status", "[NORMAL]");
-      ctx.ui.setStatus("worrie-subagent", undefined);
       ctx.ui.notify("Persona mode off. All tools restored.", "info");
     },
   });
@@ -1204,10 +1211,14 @@ export default function (pi: ExtensionAPI) {
       const content = readFileSync(projPath, "utf8");
       const anchor = content.indexOf("\n## 1.");
       const entry = `\n- **${pstNow()}**: ${msg}\n`;
-      const next =
-        anchor >= 0
-          ? content.slice(0, anchor) + entry + content.slice(anchor)
-          : content.replace(/\s*$/, "") + "\n" + entry;
+      let next: string;
+      if (anchor >= 0) {
+        // Insert AFTER the ## 1. header line (LIFO: newest at top of Section 1)
+        const headerEnd = anchor + content.slice(anchor).indexOf("\n") + 1;
+        next = content.slice(0, headerEnd) + entry + content.slice(headerEnd);
+      } else {
+        next = content.replace(/\s*$/, "") + "\n" + entry;
+      }
       writeFileSync(projPath, next);
       ctx.ui.notify("Project memory updated.", "info");
       ctx.ui.setStatus("worrie-status", "[NORMAL]");
@@ -1234,8 +1245,11 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
-      logMemory(ctx, "err", msg);
-      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      try {
+        logMemory(ctx, "err", msg);
+      } finally {
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      }
     },
   });
 
@@ -1262,8 +1276,11 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
-      logMemory(ctx, "code", msg);
-      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      try {
+        logMemory(ctx, "code", msg);
+      } finally {
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      }
     },
   });
 
@@ -1397,8 +1414,11 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         ctx.ui.setStatus("worrie-status", "[MEMORY] resolving...");
-        resolveEntry(ctx, id);
-        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        try {
+          resolveEntry(ctx, id);
+        } finally {
+          ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        }
         return;
       }
 
@@ -1452,8 +1472,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       ctx.ui.setStatus("worrie-status", "[MEMORY] logging...");
-      logMemory(ctx, type, message);
-      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      try {
+        logMemory(ctx, type, message);
+      } finally {
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      }
     },
   });
 
@@ -1506,8 +1529,11 @@ export default function (pi: ExtensionAPI) {
     description: "Archive overflow memory entries",
     handler: (args, ctx) => {
       ctx.ui.setStatus("worrie-status", "[MEMORY] archiving...");
-      archiveMemory(ctx);
-      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      try {
+        archiveMemory(ctx);
+      } finally {
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      }
     },
   });
 
@@ -1824,22 +1850,8 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── stage tracking from orchestrator subagent output ──
-  pi.on("tool_result", async (event, ctx) => {
-    if (event.toolName === "subagent") {
-      const text = JSON.stringify(event.content ?? "");
-      const stage = text.match(/\[STAGE (\d+\/\d+: [A-Z]+)\]/);
-      if (stage)
-        ctx.ui.setStatus("worrie-subagent", `[ORCH] stage ${stage[1]}`);
-      const loop = text.match(/\[LOOP (\d+\/\d+: [A-Z]+ -> [A-Z]+)\]/);
-      if (loop)
-        ctx.ui.setStatus("worrie-subagent", `[ORCH] loop ${loop[1]}`);
-    }
-  });
-
-  // ── turn end: clear temp statuses, restore after delegation ──
+  // ── turn end: restore after delegation ──
   pi.on("agent_settled", async (_event, ctx) => {
-    ctx.ui.setStatus("worrie-subagent", undefined);
     if (activePersona && PERSONAS[activePersona].delegating) {
       activePersona = null;
       if (savedTools) {
@@ -1848,9 +1860,5 @@ export default function (pi: ExtensionAPI) {
       }
       ctx.ui.setStatus("worrie-status", "[NORMAL]");
     }
-  });
-
-  pi.on("turn_end", async (_event, ctx) => {
-    ctx.ui.setStatus("worrie-subagent", undefined);
   });
 }
