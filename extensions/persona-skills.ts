@@ -1183,33 +1183,18 @@ export default function (pi: ExtensionAPI) {
           .trim()
           .replace(/[^a-z0-9]+/g, "-")
           .replace(/^-|-$/g, "");
-        let wsTemplate = "";
-        try {
-          wsTemplate = readFileSync(
-            join(PKG_ROOT, "templates", "workspace.json"),
-            "utf8",
-          );
-        } catch {
-          // fall back to plain JSON if template missing
-        }
         writeFileSync(
           WORKSPACE_FILE,
-          wsTemplate
-            ? wsTemplate
-                .replace("__WORRIE_SLUG__", slug)
-                .replace("__WORRIE_NAME__", name)
-                .replace("__WORRIE_AT__", pstNow())
-                .replace("__WORRIE_BY__", "pi-worrie")
-            : JSON.stringify(
-                {
-                  workspace_id: slug,
-                  project_name: name,
-                  initialized_at: pstNow(),
-                  initialized_by: "pi-worrie",
-                },
-                null,
-                2,
-              ),
+          JSON.stringify(
+            {
+              workspace_id: slug,
+              project_name: name,
+              initialized_at: pstNow(),
+              initialized_by: "pi-worrie",
+            },
+            null,
+            2,
+          ) + "\n// c: worrie\n",
         );
         ctx.ui.notify(`WORKSPACE INITIALIZED: ${name} | ID: ${slug}`, "info");
       } else {
