@@ -1,4 +1,5 @@
 // Personas + memory system for pi-worrie. c: worrie
+// Single-letter persona commands match uveworkflow flags.
 // Ask/plan run here. Other personas delegate to worrie-* subagents.
 import {
   readFileSync,
@@ -11,6 +12,7 @@ import {
 } from "fs";
 import { join, dirname, extname } from "path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ===================================================================
@@ -24,8 +26,27 @@ const AGENTS_DIR = join(CONFIG_DIR, "agents");
 const ARCHIVES_DIR = join(CONFIG_DIR, "archives");
 const WORKSPACE_FILE = join(CONFIG_DIR, "workspace.json");
 
-/** Read project_name from workspace.json, tolerating the trailing c: worrie comment. */
-/** Parse workspace.json tolerating the trailing c: worrie comment. Null if missing/broken. */
+// ===================================================================
+// Helpers
+// ===================================================================
+
+function pstNow(): string {
+  const d = new Date();
+  const date = d.toLocaleDateString("en-US", {
+    timeZone: "Asia/Manila",
+    month: "long",
+    day: "2-digit",
+    year: "numeric",
+  });
+  const time = d.toLocaleTimeString("en-US", {
+    timeZone: "Asia/Manila",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return `${date}, ${time} PST`;
+}
+
 function readWorkspace(): any {
   try {
     const raw = readFileSync(WORKSPACE_FILE, "utf8");
@@ -39,10 +60,45 @@ function readWorkspaceName(): string {
   return readWorkspace()?.project_name ?? "unknown";
 }
 
+function memPath(type: string): string {
+  const t = MEMORY_TYPES[type];
+  return t ? join(MEMORY_DIR, t.file) : "";
+}
+
+function setupDone(): boolean {
+  const ws = readWorkspace();
+  return !!ws?.workspace_id && ws.workspace_id !== "uninitialized";
+}
+
+function nextTrackingId(content: string, prefix: string): string {
+  const re = new RegExp(`###+ \\[${prefix}-(\\d+)\\]`, "g");
+  let max = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content))) max = Math.max(max, parseInt(m[1], 10));
+  return `${prefix}-${String(max + 1).padStart(3, "0")}`;
+}
+
+function memoryEntryIds(type: string, includeResolved: boolean): string[] {
+  const file = memPath(type);
+  if (!file || !existsSync(file)) return [];
+  const ids: string[] = [];
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (!/^#{3,4} \[/.test(line)) continue;
+    const active = line.match(/^#{3,4} \[([A-Z]+(?:-[A-Z]+)*-\d+)\]/);
+    if (active) {
+      ids.push(active[1]);
+      continue;
+    }
+    const resolved = line.match(
+      /^#{3,4} \[RESOLVED\][^\n]*\(([A-Z]+(?:-[A-Z]+)*-\d+)\)/,
+    );
+    if (resolved && includeResolved) ids.push(resolved[1]);
+  }
+  return ids;
+}
+
 // ===================================================================
-// Rules source: which rules the main session follows
-// (default .pi rules vs a project AGENTS.md / CLAUDE.md).
-// Enforced via pi's native AGENTS.override.md slot in the project root.
+// Rules source (pi rules vs AGENTS.md/CLAUDE.md)
 // ===================================================================
 
 const RULES_SOURCE_FILE = join(CONFIG_DIR, "rules-source.json");
@@ -64,7 +120,6 @@ function writeRulesSource(source: RulesSource): void {
   writeFileSync(RULES_SOURCE_FILE, `${JSON.stringify({ source }, null, 2)}\n`);
 }
 
-/** Dialog options built from what actually exists in the project root. */
 function rulesOptions(): { label: string; source: RulesSource }[] {
   const opts: { label: string; source: RulesSource }[] = [
     { label: "Use current extension rules (Default)", source: "pi" },
@@ -76,16 +131,9 @@ function rulesOptions(): { label: string; source: RulesSource }[] {
   return opts;
 }
 
-/**
- * Materialize the chosen rules into AGENTS.override.md — pi loads it FIRST,
- * so it wins over AGENTS.md/CLAUDE.md. Returns true on success.
- */
 function applyRulesSource(source: RulesSource): boolean {
   let content: string;
   if (source === "pi") {
-    // Self-contained: embed the slim rules directly (same body the worrie-*
-    // agent files carry). Installed workspaces have no .pi/rules copies of
-    // .clinerules/system_instructions.md, so a pointer would target nothing.
     const rules = buildSubagentRules(loadWorkspaceRules()).trim();
     content = rules
       ? `# Rules Override (pi-worrie)\n\n${rules}`
@@ -107,10 +155,17 @@ function applyRulesSource(source: RulesSource): boolean {
   }
 }
 
+// ===================================================================
+// Tool sets
+// ===================================================================
+
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
 const SHELL_TOOLS = [...READ_ONLY_TOOLS, "subagent", "subagent_wait"];
 
-// Memory type names -> file + id prefix (null = no tracking ids)
+// ===================================================================
+// Memory types + archive map
+// ===================================================================
+
 const MEMORY_TYPES: Record<
   string,
   { file: string; prefix: string | null; title: string }
@@ -143,6 +198,10 @@ const ARCHIVE_MAP: Record<string, { file: string; archive: string }> = {
   test: { file: "test_memory.md", archive: "test_archive.md" },
 };
 
+// ===================================================================
+// Persona definitions (single-letter commands)
+// ===================================================================
+
 const PERSONAS: Record<
   string,
   {
@@ -154,7 +213,7 @@ const PERSONAS: Record<
     delegation: (task: string) => string;
   }
 > = {
-  ask: {
+  a: {
     tools: READ_ONLY_TOOLS,
     delegating: false,
     status: "[ASK] read-only",
@@ -162,7 +221,7 @@ const PERSONAS: Record<
       "You are the ASK persona: a read-only technical assistant. You may read, grep, find, and ls files to locate and analyze code. NEVER write, edit, or run bash. Answer with clear, structured explanations.",
     delegation: (task) => task,
   },
-  plan: {
+  p: {
     tools: READ_ONLY_TOOLS,
     delegating: false,
     status: "[PLAN] read-only",
@@ -170,7 +229,7 @@ const PERSONAS: Record<
       "You are the PLAN persona: a read-only planner. You may read, grep, find, and ls files to gather context. NEVER write, edit, or run bash. Produce a structured engineering plan and WAIT for user approval before any implementation.",
     delegation: (task) => task,
   },
-  coder: {
+  c: {
     tools: SHELL_TOOLS,
     delegating: true,
     agent: "worrie-coder",
@@ -180,7 +239,7 @@ const PERSONAS: Record<
     delegation: (task) =>
       `Launch the worrie-coder subagent with the task below. Do NOT implement anything in this session. Await the subagent result and present a concise summary: files changed, logic added, memory entries written.\n\nTask: ${task}`,
   },
-  debugger: {
+  d: {
     tools: SHELL_TOOLS,
     delegating: true,
     agent: "worrie-debugger",
@@ -190,25 +249,17 @@ const PERSONAS: Record<
     delegation: (task) =>
       `Launch the worrie-debugger subagent with the problem below. Do NOT debug in this session yourself. Await the result and present a concise summary: root cause, files changed, fix applied, memory entries written.\n\nProblem: ${task}`,
   },
-  orchestrator: {
+  o: {
     tools: SHELL_TOOLS,
     delegating: true,
     agent: "worrie-orchestrator",
     status: "[ORCH] auto-detect",
     prompt:
       "You are the ORCHESTRATOR coordinator. Launch the worrie-orchestrator subagent in AUTO-DETECT mode: it picks the right persona from the user's prompt. Present its summary.",
-    delegation: (task) =>
-      `Launch the worrie-orchestrator subagent in AUTO-DETECT mode. It analyzes the user prompt and chooses the matching persona (coder, debugger, reviewer, secure, tester, ask logic). Do NOT do the work in this session. Present the concise summary.\n\nPrompt: ${task}`,
-  },
-  "orch-full": {
-    tools: SHELL_TOOLS,
-    delegating: true,
-    agent: "worrie-orchestrator",
-    status: "[ORCH-FULL] pipeline running",
-    prompt:
-      "You are the ORCH-FULL coordinator. Launch the subagent tool with a CHAIN of 11 steps for the full pipeline. Present the final summary.",
-    delegation: (task) =>
-      `Launch the subagent tool with a CHAIN of 11 steps for this task. Each step runs as a fresh subagent - do NOT do the work in this session. Set approval: true on steps 2 through 11 (the extension will ask the user before each step). Give each step a label like "1/11: PLAN". The chain steps are:
+    delegation: (task) => {
+      if (task.toLowerCase().startsWith("auto ")) {
+        const userTask = task.slice(5).trim();
+        return `Launch the subagent tool with a CHAIN of 11 steps for this task. Each step runs as a fresh subagent - do NOT do the work in this session. Set approval: true on steps 2 through 11 (the extension will ask the user before each step). Give each step a label like "1/11: PLAN". The chain steps are:
 1. worrie-planner - PLAN: produce a structured roadmap with clear steps
 2. worrie-coder - CODE: implement the approved plan (use {previous})
 3. worrie-tester - TEST: run typecheck, lint, unit, integration, E2E, coverage. Summarize pass/fail.
@@ -221,19 +272,12 @@ const PERSONAS: Record<
 10. worrie-coder - DOCUMENT: write summary to implementation_memory.md and project_memory.md
 11. ASK stage: after the chain finishes, present the final summary to the user and ask what's next.
 
-Task: ${task}`,
+Task: ${userTask}`;
+      }
+      return `Launch the worrie-orchestrator subagent in AUTO-DETECT mode. It analyzes the user prompt and chooses the matching persona (coder, debugger, reviewer, secure, tester, ask logic). Do NOT do the work in this session. Present the concise summary.\n\nPrompt: ${task}`;
+    },
   },
-  reviewer: {
-    tools: SHELL_TOOLS,
-    delegating: true,
-    agent: "worrie-reviewer",
-    status: "[REVIEWER] active",
-    prompt:
-      "You are the REVIEWER coordinator. Launch the worrie-reviewer subagent and present its findings summary to the user.",
-    delegation: (task) =>
-      `Launch the worrie-reviewer subagent for the review target below. Do NOT review in this session yourself. Await the result and present a concise findings summary (severity, file, recommendation).\n\nTarget: ${task}`,
-  },
-  secure: {
+  s: {
     tools: SHELL_TOOLS,
     delegating: true,
     agent: "worrie-secure",
@@ -243,7 +287,17 @@ Task: ${task}`,
     delegation: (task) =>
       `Launch the worrie-secure subagent for the security target below. Do NOT scan in this session yourself. Await the result and present a concise assessment (vulnerabilities, score 0-10, remediation).\n\nTarget: ${task}`,
   },
-  tester: {
+  r: {
+    tools: SHELL_TOOLS,
+    delegating: true,
+    agent: "worrie-reviewer",
+    status: "[REVIEWER] active",
+    prompt:
+      "You are the REVIEWER coordinator. Launch the worrie-reviewer subagent and present its findings summary to the user.",
+    delegation: (task) =>
+      `Launch the worrie-reviewer subagent for the review target below. Do NOT review in this session yourself. Await the result and present a concise findings summary (severity, file, recommendation).\n\nTarget: ${task}`,
+  },
+  t: {
     tools: SHELL_TOOLS,
     delegating: true,
     agent: "worrie-tester",
@@ -261,73 +315,74 @@ Task: ${task}`,
 
 let activePersona: string | null = null;
 let savedTools: string[] | null = null;
-let memoryConfig = { autoLog: true, promptOnBlock: true, maxEntries: 10 };
+let memoryConfig = { promptOnBlock: true, maxEntries: 10 };
 
 // ===================================================================
-// Helpers
+// Agent file construction (written by /setup)
 // ===================================================================
 
-function pstNow(): string {
-  const d = new Date();
-  const date = d.toLocaleDateString("en-US", {
-    timeZone: "Asia/Manila",
-    month: "long",
-    day: "2-digit",
-    year: "numeric",
-  });
-  const time = d.toLocaleTimeString("en-US", {
-    timeZone: "Asia/Manila",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-  return `${date}, ${time} PST`;
-}
-
-function memPath(type: string): string {
-  const t = MEMORY_TYPES[type];
-  return t ? join(MEMORY_DIR, t.file) : "";
-}
-
-function setupDone(): boolean {
-  const ws = readWorkspace();
-  return !!ws?.workspace_id && ws.workspace_id !== "uninitialized";
-}
-
-// Next id for a file. Template examples hold 001, so the first real log gets 002 (REVIEW-017).
-function nextTrackingId(content: string, prefix: string): string {
-  // Matches 3- and 4-hash headers (codebase_map uses ####)
-  const re = new RegExp(`###+ \\[${prefix}-(\\d+)\\]`, "g");
-  let max = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(content))) max = Math.max(max, parseInt(m[1], 10));
-  return `${prefix}-${String(max + 1).padStart(3, "0")}`;
-}
-
-function memoryEntryIds(type: string, includeResolved: boolean): string[] {
-  const file = memPath(type);
-  if (!file || !existsSync(file)) return [];
-  const ids: string[] = [];
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    if (!/^#{3,4} \[/.test(line)) continue;
-    const active = line.match(/^#{3,4} \[([A-Z]+(?:-[A-Z]+)*-\d+)\]/);
-    if (active) {
-      ids.push(active[1]);
-      continue;
-    }
-    const resolved = line.match(
-      /^#{3,4} \[RESOLVED\][^\n]*\(([A-Z]+(?:-[A-Z]+)*-\d+)\)/,
-    );
-    if (resolved && includeResolved) ids.push(resolved[1]);
+function extensionDir(): string {
+  try {
+    return dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return __dirname;
   }
-  return ids;
 }
 
-// ===================================================================
-// Agent file templates (written by /setup)
-// ===================================================================
+const PKG_ROOT = join(extensionDir(), "..");
 
-// Agent file = ../skills persona + tools + protocol + WORKSPACE RULES from ../rules/.
+function loadWorkspaceRules(): string {
+  try {
+    const cli = readFileSync(join(PKG_ROOT, "rules", ".clinerules"), "utf8");
+    const sys = readFileSync(
+      join(PKG_ROOT, "rules", "system_instructions.md"),
+      "utf8",
+    );
+    return `${cli}\n\n---\n\n${sys}`;
+  } catch {
+    return "";
+  }
+}
+
+const SUBAGENT_RULES_SECTIONS = [
+  "System Boundaries",
+  "Strict Rule Modification Constraints",
+  "MANDATORY TIMESTAMP COMPUTATION RULE",
+  "NEWEST-ON-TOP SORTING ENFORCEMENT",
+  "BEGINNER-FRIENDLY HIGH-DETAIL CLARITY MANDATE",
+  "IMMUTABLE SECTION TITLE AND LOG PROTECTION",
+  "CRITICAL DATA RETENTION & HISTORICAL PRESERVATION",
+  "IMMEDIATE RESOLUTION MANDATE",
+];
+
+function buildSubagentRules(full: string): string {
+  const lines = full.split("\n");
+  const isH2 = new Array(lines.length).fill(false);
+  let fence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trimStart();
+    if (t.startsWith("```")) fence = !fence;
+    if (!fence && /^##\s+\S/.test(t)) isH2[i] = true;
+  }
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!isH2[i] || !SUBAGENT_RULES_SECTIONS.some((p) => lines[i].includes(p)))
+      continue;
+    let j = i + 1;
+    while (j < lines.length && !isH2[j]) j++;
+    out.push(lines.slice(i, j).join("\n").trim());
+    i = j - 1;
+  }
+  return out.join("\n\n");
+}
+
+const RULES_START = "## WORKSPACE RULES (pi-worrie -- immutable)";
+const RULES_END = "<!-- c: worrie -->";
+
+function rulesBlock(rulesText: string): string {
+  return `${RULES_START}\n\n${rulesText}`;
+}
+
 const AGENT_SPECS: Record<
   string,
   { skill: string; tools: string; memoryProtocol?: string }
@@ -404,79 +459,6 @@ const AGENT_SPECS: Record<
   },
 };
 
-// ===================================================================
-// Agent file construction: persona (../skills) + protocol + WORKSPACE RULES
-// ===================================================================
-
-/** Directory of this extension file (works under jiti CJS and ESM loading). */
-function extensionDir(): string {
-  try {
-    return dirname(fileURLToPath(import.meta.url));
-  } catch {
-    return __dirname;
-  }
-}
-
-const PKG_ROOT = join(extensionDir(), "..");
-
-/** Full workspace rules text, identical to .pi/rules (two files, joined). */
-function loadWorkspaceRules(): string {
-  try {
-    const cli = readFileSync(join(PKG_ROOT, "rules", ".clinerules"), "utf8");
-    const sys = readFileSync(
-      join(PKG_ROOT, "rules", "system_instructions.md"),
-      "utf8",
-    );
-    return `${cli}\n\n---\n\n${sys}`;
-  } catch {
-    return "";
-  }
-}
-
-// H2 sections from the full rules that a subagent actually needs at execution time.
-// Everything else (persona matrix, delegation, flag protocols, init/archive/clean) is
-// main-session meta-work handled by the extension commands + the parent session.
-const SUBAGENT_RULES_SECTIONS = [
-  "System Boundaries",
-  "Strict Rule Modification Constraints",
-  "MANDATORY TIMESTAMP COMPUTATION RULE",
-  "NEWEST-ON-TOP SORTING ENFORCEMENT",
-  "BEGINNER-FRIENDLY HIGH-DETAIL CLARITY MANDATE",
-  "IMMUTABLE SECTION TITLE AND LOG PROTECTION",
-  "CRITICAL DATA RETENTION & HISTORICAL PRESERVATION",
-  "IMMEDIATE RESOLUTION MANDATE",
-];
-
-/** Slice out only the subagent-relevant H2 sections from the full rules text. */
-function buildSubagentRules(full: string): string {
-  const lines = full.split("\n");
-  const isH2 = new Array(lines.length).fill(false);
-  let fence = false;
-  for (let i = 0; i < lines.length; i++) {
-    const t = lines[i].trimStart();
-    if (t.startsWith("```")) fence = !fence;
-    if (!fence && /^##\s+\S/.test(t)) isH2[i] = true;
-  }
-  const out: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (!isH2[i] || !SUBAGENT_RULES_SECTIONS.some((p) => lines[i].includes(p)))
-      continue;
-    let j = i + 1;
-    while (j < lines.length && !isH2[j]) j++;
-    out.push(lines.slice(i, j).join("\n").trim());
-    i = j - 1;
-  }
-  return out.join("\n\n");
-}
-
-const RULES_START = "## WORKSPACE RULES (pi-worrie -- immutable)";
-const RULES_END = "<!-- c: worrie -->"; // end boundary = sole credit marker; never emitted inside the block
-
-function rulesBlock(rulesText: string): string {
-  return `${RULES_START}\n\n${rulesText}`;
-}
-
-// Agent file = skill persona + tools + memory protocol + slim workspace rules.
 function buildAgentFile(
   spec: { skill: string; tools: string; memoryProtocol?: string },
   rulesText: string,
@@ -484,13 +466,10 @@ function buildAgentFile(
 ): string {
   const skillPath = join(PKG_ROOT, "skills", spec.skill, "SKILL.md");
   let skill = readFileSync(skillPath, "utf8");
-  // The skill's own trailing marker moves to the very end of the generated file.
   skill = skill.replace(/\s*<!--\s*c: worrie\s*-->\s*$/, "");
   if (skill.startsWith("---")) {
     const end = skill.indexOf("\n---", 3);
     if (end > 0) {
-      // Rename to the worrie-* agent identity — subagents.ts discovers by
-      // frontmatter name, and persona commands launch worrie-* agents.
       const head = /\nname:[^\n]*/.test(skill.slice(0, end))
         ? skill.slice(0, end).replace(/\nname:[^\n]*/, `\nname: ${agentName}`)
         : `${skill.slice(0, end)}\nname: ${agentName}`;
@@ -510,7 +489,6 @@ function buildAgentFile(
   );
 }
 
-/** Refresh the rules section in an existing agent file; returns true if changed. */
 function refreshRulesSection(filePath: string, rulesText: string): boolean {
   let content: string;
   try {
@@ -544,7 +522,7 @@ function refreshRulesSection(filePath: string, rulesText: string): boolean {
 }
 
 // ===================================================================
-// Memory file templates (written by /setup when missing)
+// Memory templates
 // ===================================================================
 
 function loadMemoryTemplate(file: string): string {
@@ -585,13 +563,20 @@ const MEMORY_TEMPLATES: Record<string, string> = {
 
 const ARCHIVE_TEMPLATES: Record<string, string> = {
   "error_archive.md": loadArchiveTemplate("error_archive.md"),
-  "implementation_archive.md": loadArchiveTemplate("implementation_archive.md"),
+  "implementation_archive.md": loadArchiveTemplate(
+    "implementation_archive.md",
+  ),
   "review_archive.md": loadArchiveTemplate("review_archive.md"),
   "security_archive.md": loadArchiveTemplate("security_archive.md"),
   "test_archive.md": loadArchiveTemplate("test_archive.md"),
 };
 
 const PROJECT_MEMORY_TEMPLATE = loadProjectMemoryTemplate();
+
+// ===================================================================
+// Memory helpers
+// ===================================================================
+
 function logMemory(ctx: any, type: string, message: string): void {
   const file = memPath(type);
   if (!file || !existsSync(file)) {
@@ -620,7 +605,6 @@ function logMemory(ctx: any, type: string, message: string): void {
   ctx.ui.notify(`Logged ${id ?? type} to ${t.file}`, "info");
 }
 
-// Memory entry with the exact fields from the user workflow templates.
 function buildMemoryEntry(
   type: string,
   id: string | null,
@@ -647,7 +631,49 @@ function buildMemoryEntry(
   }
 }
 
-function showMemory(ctx: any, type: string, opt: string): void {
+function resolveEntry(ctx: any, id: string): void {
+  const idUpper = id.toUpperCase();
+  let found = false;
+  for (const [type, t] of Object.entries(MEMORY_TYPES)) {
+    if (!t.prefix) continue;
+    const file = memPath(type);
+    if (!file || !existsSync(file)) continue;
+    const content = readFileSync(file, "utf8");
+    const lines = content.split("\n");
+    const start = lines.findIndex((l) => l.startsWith(`### [${idUpper}] `));
+    if (start === -1) continue;
+    const sec1End = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
+    if (sec1End === -1) continue;
+    let end = lines.findIndex((l, i) => i > start && /^#{3,4} \[/.test(l));
+    if (end === -1) end = sec1End;
+    const block = lines.slice(start, end);
+    const title = block[0].replace(`### [${idUpper}] `, "");
+    block[0] = `### [RESOLVED] ${title} (${idUpper})`;
+    let sec2 = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
+    if (sec2 === -1) sec2 = sec1End;
+    let ins = sec2 + 1;
+    while (
+      ins < lines.length &&
+      (lines[ins].trim() === "" ||
+        lines[ins].startsWith("_") ||
+        lines[ins].startsWith(">"))
+    )
+      ins++;
+    lines.splice(start, end - start);
+    lines.splice(ins, 0, ...block, "");
+    writeFileSync(file, lines.join("\n"));
+    ctx.ui.notify(`Resolved ${idUpper} → Section 2 (${t.file})`, "info");
+    found = true;
+    break;
+  }
+  if (!found)
+    ctx.ui.notify(
+      `Entry ${idUpper} not found in active section.`,
+      "warning",
+    );
+}
+
+function buildTable(ctx: any, type: string, flag: string): void {
   const t = MEMORY_TYPES[type];
   const file = memPath(type);
   if (!file || !existsSync(file)) {
@@ -664,131 +690,80 @@ function showMemory(ctx: any, type: string, opt: string): void {
     .map((b) => "###" + b);
   const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
   const entries = blocks.filter((b) =>
-    /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+\])/.test(b),
+    /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b),
   );
   let list = entries;
-  if (opt === "--open")
+  if (flag === "--active")
     list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
-  else if (opt === "--resolved")
+  else if (flag === "--resolved")
     list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
-  else if (opt === "--all") list = entries;
-  else if (/^\d+$/.test(opt)) list = entries.slice(0, parseInt(opt, 10));
-  else if (opt && !opt.startsWith("--")) {
-    const id = opt.toUpperCase();
-    list = entries.filter((b) => b.includes(`[${id}]`));
-  } else list = entries.slice(0, 5);
-  if (list.length === 0) {
-    ctx.ui.notify("No entries found.", "info");
-    return;
-  }
-  const out = list
-    .map((b) => {
-      const head = b.split("\n")[0];
-      const status = b.startsWith("### [RESOLVED]") ? "RESOLVED" : "OPEN";
-      return `${head.replace(/^### /, "")}  ${status}`;
-    })
-    .join("\n");
-  ctx.ui.notify(`${t.title ?? type} (${list.length} shown):\n${out}`, "info");
-}
-
-// ── New /m workflow helpers ──
-
-/** Resolve entry by ID across all memory files (AI-free). */
-function resolveEntry(ctx: any, id: string): void {
-  const idUpper = id.toUpperCase();
-  let found = false;
-  for (const [type, t] of Object.entries(MEMORY_TYPES)) {
-    if (!t.prefix) continue;
-    const file = memPath(type);
-    if (!file || !existsSync(file)) continue;
-    const content = readFileSync(file, "utf8");
-    const lines = content.split("\n");
-    // Find in Section 1 (active)
-    const start = lines.findIndex((l) => l.startsWith(`### [${idUpper}] `));
-    if (start === -1) continue;
-    // Check it's in Section 1, not Section 2
-    const sec1End = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
-    if (sec1End === -1) continue; // not in Section 1
-    // Find end of this entry block
-    let end = lines.findIndex((l, i) => i > start && /^#{3,4} \[/.test(l));
-    if (end === -1) {
-      end = sec1End;
-    }
-    const block = lines.slice(start, end);
-    const title = block[0].replace(`### [${idUpper}] `, "");
-    block[0] = `### [RESOLVED] ${title} (${idUpper})`;
-    // Move to Section 2
-    let sec2 = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
-    if (sec2 === -1) sec2 = sec1End;
-    let ins = sec2 + 1;
-    while (ins < lines.length && (lines[ins].trim() === "" || lines[ins].startsWith("_") || lines[ins].startsWith(">"))) ins++;
-    lines.splice(start, end - start);
-    lines.splice(ins, 0, ...block, "");
-    writeFileSync(file, lines.join("\n"));
-    ctx.ui.notify(`Resolved ${idUpper} → Section 2 (${t.file})`, "info");
-    found = true;
-    break;
-  }
-  if (!found) ctx.ui.notify(`Entry ${idUpper} not found in active section.`, "warning");
-}
-
-/** Build table for a single memory file. */
-function buildTable(ctx: any, type: string, flag: string): void {
-  const t = MEMORY_TYPES[type];
-  const file = memPath(type);
-  if (!file || !existsSync(file)) {
-    ctx.ui.notify(`Memory file for "${type}" missing. Run /setup first.`, "warning");
-    return;
-  }
-  const content = readFileSync(file, "utf8");
-  const raw = content.split("\n###").slice(1).map((b) => "###" + b);
-  const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
-  const entries = blocks.filter((b) => /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b));
-  let list = entries;
-  if (flag === "--active") list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
-  else if (flag === "--resolved") list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
   else if (flag === "--all") list = entries;
   else if (flag === "--count") {
-    const active = entries.filter((b) => !b.startsWith("### [RESOLVED]")).length;
-    const resolved = entries.filter((b) => b.startsWith("### [RESOLVED]")).length;
-    ctx.ui.notify(`${type}: open ${active}  resolved ${resolved}  total ${active + resolved}`, "info");
+    const active = entries.filter(
+      (b) => !b.startsWith("### [RESOLVED]"),
+    ).length;
+    const resolved = entries.filter((b) =>
+      b.startsWith("### [RESOLVED]"),
+    ).length;
+    ctx.ui.notify(
+      `${type}: open ${active}  resolved ${resolved}  total ${active + resolved}`,
+      "info",
+    );
     return;
   }
   if (list.length === 0) {
     ctx.ui.notify(`No entries for ${type}.`, "info");
     return;
   }
-  // Format as table
   const rows = list.map((b) => {
     const head = b.split("\n")[0];
     const status = b.startsWith("### [RESOLVED]") ? "RESOLVED" : "OPEN";
-    // Extract ID and title
     const match = head.match(/^### \[([^\]]+)\] (.+)/);
     const id = match ? `[${match[1]}]` : head.slice(0, 12).padEnd(12);
-    const title = match ? match[2].slice(0, 40).padEnd(40) : head.slice(12).padEnd(40);
+    const title = match
+      ? match[2].slice(0, 40).padEnd(40)
+      : head.slice(12).padEnd(40);
     return `| ${id} | ${title} | ${status} |`;
   });
   const header = `| ID | Title | Status |\n|----|-------|--------|`;
-  ctx.ui.notify(`/ml ${type} (${list.length} entries)\n${header}\n${rows.join("\n")}`, "info");
+  ctx.ui.notify(
+    `/m list ${type} (${list.length} entries)\n${header}\n${rows.join("\n")}`,
+    "info",
+  );
 }
 
-/** Build cross-file table overview. */
 function buildCrossFileTable(ctx: any, flag: string): void {
-  const allEntries: Array<{ file: string; id: string; title: string; status: string }> = [];
+  const allEntries: Array<{
+    file: string;
+    id: string;
+    title: string;
+    status: string;
+  }> = [];
   for (const [type, t] of Object.entries(MEMORY_TYPES)) {
     if (!t.prefix) continue;
     const file = memPath(type);
     if (!file || !existsSync(file)) continue;
     const content = readFileSync(file, "utf8");
-    const raw = content.split("\n###").slice(1).map((b) => "###" + b);
+    const raw = content
+      .split("\n###")
+      .slice(1)
+      .map((b) => "###" + b);
     const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
-    const entries = blocks.filter((b) => /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b));
+    const entries = blocks.filter((b) =>
+      /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b),
+    );
     let list = entries;
-    if (flag === "--active") list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
-    else if (flag === "--resolved") list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
+    if (flag === "--active")
+      list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
+    else if (flag === "--resolved")
+      list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
     else if (flag === "--count") {
-      const active = entries.filter((b) => !b.startsWith("### [RESOLVED]")).length;
-      const resolved = entries.filter((b) => b.startsWith("### [RESOLVED]")).length;
+      const active = entries.filter(
+        (b) => !b.startsWith("### [RESOLVED]"),
+      ).length;
+      const resolved = entries.filter((b) =>
+        b.startsWith("### [RESOLVED]"),
+      ).length;
       ctx.ui.notify(`${t.file}: open ${active}  resolved ${resolved}`, "info");
       continue;
     }
@@ -810,156 +785,19 @@ function buildCrossFileTable(ctx: any, flag: string): void {
     ctx.ui.notify("No entries found.", "info");
     return;
   }
-  // Format as table (max 20 rows)
-  const rows = allEntries.slice(0, 20).map((e) =>
-    `| ${e.file.padEnd(20)} | ${e.id.padEnd(10)} | ${e.title.padEnd(35)} | ${e.status} |`,
-  );
-  const header = `| File | ID | Title | Status |\n|------|----|-------|--------|`;
-  const extra = allEntries.length > 20 ? `\n... and ${allEntries.length - 20} more` : "";
-  ctx.ui.notify(`/mlist (${flag}) ${allEntries.length} entries total${extra}\n${header}\n${rows.join("\n")}`, "info");
-}
-
-function resolveMemory(ctx: any, type: string, id: string): void {
-  const file = memPath(type);
-  if (!file || !existsSync(file)) {
-    ctx.ui.notify(`Memory file for "${type}" missing.`, "warning");
-    return;
-  }
-  const content = readFileSync(file, "utf8");
-  const lines = content.split("\n");
-  const start = lines.findIndex((l) => l.startsWith(`### [${id}] `));
-  if (start === -1) {
-    ctx.ui.notify(`Entry ${id} not found in active section.`, "warning");
-    return;
-  }
-
-  // impl files have NO Section 2 (workflow format): resolve in place via Status
-  if (type === "impl") {
-    let done = false;
-    const end = (() => {
-      const n = lines.findIndex((l, i) => i > start && l.startsWith("### ["));
-      return n === -1 ? lines.length : n;
-    })();
-    for (let i = start; i < end; i++) {
-      if (lines[i].startsWith("- **Status**: ")) {
-        lines[i] = "- **Status**: COMPLETED";
-        done = true;
-        break;
-      }
-    }
-    if (!done) {
-      ctx.ui.notify(`Entry ${id} has no Status field to update.`, "warning");
-      return;
-    }
-    writeFileSync(file, lines.join("\n"));
-    ctx.ui.notify(
-      `Resolved ${id}: Status -> COMPLETED (impl entries stay in Section 1 per workflow format).`,
-      "info",
-    );
-    return;
-  }
-  if (type === "code" || type === "proj") {
-    ctx.ui.notify(
-      `${type} entries follow the workflow structure and are not moved to Section 2.`,
-      "info",
-    );
-    return;
-  }
-  let end = lines.findIndex((l, i) => i > start && l.startsWith("### ["));
-  if (end === -1) {
-    // no more entries after this one: cap the block at Section 2 header
-    const s2 = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
-    end = s2 === -1 ? lines.length : s2;
-  }
-  const block = lines.slice(start, end);
-  lines.splice(start, end - start);
-  const title = block[0].replace(`### [${id}] `, "");
-  block[0] = `### [RESOLVED] ${title} (${id})`;
-  let sec2 = lines.findIndex((l) => l.startsWith("## 2."));
-  if (sec2 === -1) {
-    ctx.ui.notify("Section 2 header not found in file.", "warning");
-    return;
-  }
-  let ins = sec2 + 1;
-  while (
-    ins < lines.length &&
-    (lines[ins].trim() === "" ||
-      lines[ins].startsWith("_") ||
-      lines[ins].startsWith(">"))
-  )
-    ins++;
-  lines.splice(ins, 0, ...block, "");
-  writeFileSync(file, lines.join("\n"));
-  ctx.ui.notify(
-    `Resolved ${id}. Moved to Section 2 as [RESOLVED] ${title} (${id})`,
-    "info",
-  );
-}
-
-function editMemory(
-  ctx: any,
-  type: string,
-  id: string,
-  field: string,
-  value: string,
-): void {
-  const file = memPath(type);
-  if (!file || !existsSync(file)) {
-    ctx.ui.notify(`Memory file for "${type}" missing.`, "warning");
-    return;
-  }
-  const content = readFileSync(file, "utf8");
-  const lines = content.split("\n");
-  const start = lines.findIndex(
-    (l) =>
-      (/^#{3,4} \[/.test(l) && l.includes(`[${id}]`)) ||
-      (/^#{3,4} \[RESOLVED\]/.test(l) && l.includes(`(${id})`)),
-  );
-  if (start === -1) {
-    ctx.ui.notify(`Entry ${id} not found.`, "warning");
-    return;
-  }
-  let end = lines.findIndex((l, i) => i > start && /^#{3,4} \[/.test(l));
-  if (end === -1) {
-    const s2 = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
-    end = s2 === -1 ? lines.length : s2;
-  }
-  const block = lines.slice(start, end);
-  const fieldLine = block.findIndex((l) => l.startsWith(`- **${field}**:`));
-  if (fieldLine !== -1) block[fieldLine] = `- **${field}**: ${value}`;
-  else block.splice(block.length - 1, 0, `- **${field}**: ${value}`);
-  lines.splice(start, end - start, ...block);
-  writeFileSync(file, lines.join("\n"));
-  ctx.ui.notify(`Updated ${id}: ${field} = ${value}`, "info");
-}
-
-function searchMemory(ctx: any, type: string, query: string): void {
-  const file = memPath(type);
-  if (!file || !existsSync(file)) {
-    ctx.ui.notify(`Memory file for "${type}" missing.`, "warning");
-    return;
-  }
-  const content = readFileSync(file, "utf8");
-  const lines = content.split("\n");
-  const hits = lines
-    .map((l, i) => ({ l, i: i + 1 }))
-    .filter(
-      ({ l }) =>
-        l.toLowerCase().includes(query.toLowerCase()) && l.trim() !== "",
-    );
-  if (hits.length === 0) {
-    ctx.ui.notify(
-      `No matches for "${query}" in ${MEMORY_TYPES[type].file}`,
-      "info",
-    );
-    return;
-  }
-  const out = hits
+  const rows = allEntries
     .slice(0, 20)
-    .map(({ l, i }) => `line ${i}: ${l.trim().slice(0, 90)}`)
-    .join("\n");
+    .map(
+      (e) =>
+        `| ${e.file.padEnd(20)} | ${e.id.padEnd(10)} | ${e.title.padEnd(35)} | ${e.status} |`,
+    );
+  const header = `| File | ID | Title | Status |\n|------|----|-------|--------|`;
+  const extra =
+    allEntries.length > 20
+      ? `\n... and ${allEntries.length - 20} more`
+      : "";
   ctx.ui.notify(
-    `${hits.length} match(es) in ${MEMORY_TYPES[type].file}:\n${out}`,
+    `/m list (${flag}) ${allEntries.length} entries total${extra}\n${header}\n${rows.join("\n")}`,
     "info",
   );
 }
@@ -982,8 +820,6 @@ function archiveMemory(ctx: any): void {
       .filter(({ l }) => l.startsWith("### ["));
     if (starts.length <= memoryConfig.maxEntries) continue;
     const overflow = starts.length - memoryConfig.maxEntries;
-    // oldest = bottom of section 1
-    // keep the newest maxEntries, archive everything below them
     const cutIdx = starts[memoryConfig.maxEntries].i;
     const archived = lines.slice(cutIdx, sec2);
     lines.splice(cutIdx, sec2 - cutIdx);
@@ -1029,7 +865,7 @@ function archiveMemory(ctx: any): void {
 
 function showConfig(ctx: any): void {
   ctx.ui.notify(
-    `[MEM] auto-log ${memoryConfig.autoLog ? "ON" : "OFF"}\n[BLOCK] prompt ${memoryConfig.promptOnBlock ? "ON" : "OFF"}\n[ARCHIVE] threshold ${memoryConfig.maxEntries}`,
+    `[BLOCK] prompt ${memoryConfig.promptOnBlock ? "ON" : "OFF"}\n[ARCHIVE] threshold ${memoryConfig.maxEntries}`,
     "info",
   );
 }
@@ -1120,9 +956,9 @@ function scanForArtifacts(dir: string, result: ScanResult): void {
 // ===================================================================
 
 export default function (pi: ExtensionAPI) {
-  // ── session start: restore state, status lines ──
+  // ── session start: restore state ──
   pi.on("session_start", async (_event, ctx) => {
-    memoryConfig = { autoLog: true, promptOnBlock: true, maxEntries: 10 };
+    memoryConfig = { promptOnBlock: true, maxEntries: 10 };
     activePersona = null;
     try {
       for (const entry of ctx.sessionManager.getEntries()) {
@@ -1142,23 +978,17 @@ export default function (pi: ExtensionAPI) {
     } catch {
       // ephemeral session
     }
-    // restore the rules override if a source was chosen before
     const saved = readRulesSource();
     if (saved) applyRulesSource(saved);
     if (!setupDone()) {
-      ctx.ui.setStatus("worrie-setup", "[SETUP] not initialized");
-    }
-    ctx.ui.setStatus(
-      "worrie-memory",
-      `[MEM] auto-log ${memoryConfig.autoLog ? "ON" : "OFF"}`,
-    );
-    if (activePersona) {
+      ctx.ui.setStatus("worrie-status", "[SETUP] not initialized");
+    } else if (activePersona) {
       const p = PERSONAS[activePersona];
-      ctx.ui.setStatus("worrie-persona", p.status);
+      ctx.ui.setStatus("worrie-status", p.status);
       savedTools = pi.getActiveTools();
       pi.setActiveTools(p.tools);
     } else {
-      ctx.ui.setStatus("worrie-persona", "[NORMAL]");
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
     }
   });
 
@@ -1167,15 +997,16 @@ export default function (pi: ExtensionAPI) {
     description:
       "Initialize workspace: workspace.json, memory files, agent files",
     handler: async (_args, ctx) => {
+      ctx.ui.setStatus("worrie-status", "[SETUP] initializing...");
       mkdirSync(MEMORY_DIR, { recursive: true });
       mkdirSync(AGENTS_DIR, { recursive: true });
       mkdirSync(ARCHIVES_DIR, { recursive: true });
 
-      // workspace.json
       if (!setupDone()) {
         const name = await ctx.ui.input("Enter project name:", "");
         if (!name) {
           ctx.ui.notify("Setup cancelled.", "warning");
+          ctx.ui.setStatus("worrie-status", "[NORMAL]");
           return;
         }
         const slug = name
@@ -1202,7 +1033,6 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`WORKSPACE ALREADY INITIALIZED: ${name}`, "info");
       }
 
-      // memory files (never overwrite existing)
       let created = 0;
       for (const [file, template] of Object.entries(MEMORY_TEMPLATES)) {
         const path = join(MEMORY_DIR, file);
@@ -1218,7 +1048,6 @@ export default function (pi: ExtensionAPI) {
         created++;
       }
 
-      // archive files
       for (const [file, template] of Object.entries(ARCHIVE_TEMPLATES)) {
         const path = join(ARCHIVES_DIR, file);
         if (!existsSync(path)) {
@@ -1227,7 +1056,6 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // agent files: create missing; refresh the WORKSPACE RULES section on re-run (persona kept)
       const rulesText = buildSubagentRules(loadWorkspaceRules());
       let agents = 0;
       for (const [file, spec] of Object.entries(AGENT_SPECS)) {
@@ -1243,8 +1071,6 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      // rules source: ask ONCE when a conflicting AGENTS.md/CLAUDE.md exists;
-      // afterwards only /rules reopens the dialog
       if (!readRulesSource()) {
         const opts = rulesOptions();
         if (opts.length > 1) {
@@ -1260,16 +1086,57 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      ctx.ui.setStatus("worrie-setup", undefined);
-      ctx.ui.setStatus("worrie-persona", "[NORMAL]");
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
       ctx.ui.notify(
-        `Setup complete. ${agents} agent file(s) created, ${created} memory/archive file(s) created. Personas ready: /ask /plan /coder /debugger /orchestrator /orch-full /reviewer /secure /tester`,
+        `Setup complete. ${agents} agent(s), ${created} memory/archive file(s). Commands: /a /p /c /d /o /s /r /t /normal /context /error /codebase /m /ml /clean /obsidian /update /rules`,
         "info",
       );
     },
   });
 
-  // ── persona commands ──
+  // ── /init (init workspace.json only) ──
+  pi.registerCommand("init", {
+    description: "Initialize workspace.json only",
+    handler: async (_args, ctx) => {
+      ctx.ui.setStatus("worrie-status", "[INIT] setting up...");
+      mkdirSync(CONFIG_DIR, { recursive: true });
+      if (!setupDone()) {
+        const name = await ctx.ui.input("Enter project name:", "");
+        if (!name) {
+          ctx.ui.notify("Init cancelled.", "warning");
+          ctx.ui.setStatus("worrie-status", "[NORMAL]");
+          return;
+        }
+        const slug = name
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "");
+        writeFileSync(
+          WORKSPACE_FILE,
+          JSON.stringify(
+            {
+              workspace_id: slug,
+              project_name: name,
+              initialized_at: pstNow(),
+              initialized_by: "pi-worrie",
+            },
+            null,
+            2,
+          ) + "\n// c: worrie\n",
+        );
+        ctx.ui.notify(`WORKSPACE INITIALIZED: ${name} | ID: ${slug}`, "info");
+      } else {
+        ctx.ui.notify(
+          `WORKSPACE ALREADY INITIALIZED: ${readWorkspaceName()}`,
+          "info",
+        );
+      }
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+    },
+  });
+
+  // ── persona commands (single-letter) ──
   for (const [name, p] of Object.entries(PERSONAS)) {
     pi.registerCommand(name, {
       description: p.delegating
@@ -1286,7 +1153,7 @@ export default function (pi: ExtensionAPI) {
         if (!savedTools) savedTools = pi.getActiveTools();
         activePersona = name;
         pi.setActiveTools(p.tools);
-        ctx.ui.setStatus("worrie-persona", p.status);
+        ctx.ui.setStatus("worrie-status", p.status);
         if (p.delegating && p.agent) {
           ctx.ui.setStatus(
             "worrie-subagent",
@@ -1309,16 +1176,100 @@ export default function (pi: ExtensionAPI) {
         pi.setActiveTools(savedTools);
         savedTools = null;
       }
-      ctx.ui.setStatus("worrie-persona", "[NORMAL]");
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
       ctx.ui.setStatus("worrie-subagent", undefined);
-      ctx.ui.setStatus("worrie-stage", undefined);
       ctx.ui.notify("Persona mode off. All tools restored.", "info");
     },
   });
 
-  // ── /m <type> "msg" — create entry ──
+  // ── /context — prompt → update project_memory.md ──
+  pi.registerCommand("context", {
+    description: "Analyze and update project_memory.md with current workflow",
+    handler: async (_args, ctx) => {
+      ctx.ui.setStatus("worrie-status", "[MEMORY] updating context...");
+      const projPath = join(CONFIG_DIR, "rules", "project_memory.md");
+      const msg = await ctx.ui.input(
+        "Describe current project state, milestones, or pending items:",
+        "",
+      );
+      if (!msg) {
+        ctx.ui.notify("Context update cancelled.", "info");
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        return;
+      }
+      if (!existsSync(projPath)) {
+        mkdirSync(dirname(projPath), { recursive: true });
+        writeFileSync(projPath, PROJECT_MEMORY_TEMPLATE);
+      }
+      const content = readFileSync(projPath, "utf8");
+      const anchor = content.indexOf("\n## 1.");
+      const entry = `\n- **${pstNow()}**: ${msg}\n`;
+      const next =
+        anchor >= 0
+          ? content.slice(0, anchor) + entry + content.slice(anchor)
+          : content.replace(/\s*$/, "") + "\n" + entry;
+      writeFileSync(projPath, next);
+      ctx.ui.notify("Project memory updated.", "info");
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+    },
+  });
+
+  // ── /error — prompt → update error_memory.md ──
+  pi.registerCommand("error", {
+    description: "Log an error to error_memory.md",
+    handler: async (_args, ctx) => {
+      ctx.ui.setStatus("worrie-status", "[MEMORY] logging error...");
+      const file = memPath("err");
+      if (!existsSync(file)) {
+        ctx.ui.notify(
+          "error_memory.md missing. Run /setup first.",
+          "warning",
+        );
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        return;
+      }
+      const msg = await ctx.ui.input("Describe the error:", "");
+      if (!msg) {
+        ctx.ui.notify("Error logging cancelled.", "info");
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        return;
+      }
+      logMemory(ctx, "err", msg);
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+    },
+  });
+
+  // ── /codebase — prompt → update codebase_map.md ──
+  pi.registerCommand("codebase", {
+    description: "Update codebase_map.md with file descriptions",
+    handler: async (_args, ctx) => {
+      ctx.ui.setStatus("worrie-status", "[MEMORY] mapping codebase...");
+      const file = memPath("code");
+      if (!existsSync(file)) {
+        ctx.ui.notify(
+          "codebase_map.md missing. Run /setup first.",
+          "warning",
+        );
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        return;
+      }
+      const msg = await ctx.ui.input(
+        "Describe file/function structure to map:",
+        "",
+      );
+      if (!msg) {
+        ctx.ui.notify("Codebase mapping cancelled.", "info");
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        return;
+      }
+      logMemory(ctx, "code", msg);
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
+    },
+  });
+
+  // ── /m — unified memory command ──
   pi.registerCommand("m", {
-    description: "Memory: log, resolve, view, list",
+    description: "Memory: log, resolve, list, config",
     getArgumentCompletions: (prefix: string) => {
       const text = prefix ?? "";
       const parts = text.split(/\s+/);
@@ -1334,49 +1285,179 @@ export default function (pi: ExtensionAPI) {
         return f.length > 0 ? f : null;
       };
 
+      if (done.length === 0)
+        return filter(
+          [
+            { value: "list", label: "list", description: "List memory entries" },
+            {
+              value: "resolve",
+              label: "resolve",
+              description: "Resolve entry by ID",
+            },
+            { value: "config", label: "config", description: "Show/set config" },
+          ],
+          current,
+        );
+
+      if (done[0] === "list") {
+        const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
+          value: key,
+          label: key,
+          description: `${t.title} -> .pi/${t.file}`,
+        }));
+        if (done.length === 1)
+          return filter(
+            [
+              ...types,
+              {
+                value: "--active",
+                label: "--active",
+                description: "Active entries only",
+              },
+              {
+                value: "--resolved",
+                label: "--resolved",
+                description: "Resolved entries only",
+              },
+              { value: "--all", label: "--all", description: "All entries" },
+              {
+                value: "--count",
+                label: "--count",
+                description: "Count only",
+              },
+            ],
+            current,
+          );
+        return null;
+      }
+
+      if (done[0] === "resolve") {
+        const ids = memoryEntryIds(
+          Object.keys(MEMORY_TYPES)[0],
+          false,
+        ).slice(0, 20);
+        return filter(
+          ids.map((id) => ({ value: id, label: id, description: `Entry ${id}` })),
+          current,
+        );
+      }
+
+      if (done[0] === "config") {
+        return filter(
+          [
+            {
+              value: "promptOnBlock",
+              label: "promptOnBlock",
+              description: "Prompt on blocked tool",
+            },
+            {
+              value: "maxEntries",
+              label: "maxEntries",
+              description: "Archive threshold",
+            },
+            { value: "reset", label: "reset", description: "Reset defaults" },
+          ],
+          current,
+        );
+      }
+
+      // logging mode: /m <type> <msg>
       const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
         value: key,
         label: key,
         description: `${t.title} -> .pi/${t.file}`,
       }));
-
-      if (done.length === 0) return filter([{ value: "r", label: "r", description: "Resolve entry by ID" }], current);
-      if (done[0] === "r") {
-        const ids = memoryEntryIds(Object.keys(MEMORY_TYPES)[0], false).slice(0, 20);
-        return filter(ids.map((id) => ({ value: id, label: id, description: `Entry ${id}` })), current);
-      }
-      const type = done[0];
-      if (!MEMORY_TYPES[type]) return filter([{ value: "r", label: "r", description: "Resolve entry by ID" }], current);
-      return null;
+      return filter(types, current);
     },
     handler: async (args, ctx) => {
       const parts = (args ?? "").trim().split(/\s+/);
-      const cmd = parts[0];
+      const sub = parts[0];
       const rest = parts.slice(1);
 
-      if (cmd === "r") {
-        // /m r <id> — resolve entry manually (AI-free)
-        const id = (rest[0] ?? "").toUpperCase();
-        if (!id) {
-          ctx.ui.notify("Usage: /m r <ERR-XXX | SEC-XXX | REV-XXX | TEST-XXX>", "warning");
+      // /m list [type] [--flags]
+      if (sub === "list") {
+        const type = rest[0];
+        const flag = rest[1] ?? "--active";
+        if (!type || !MEMORY_TYPES[type]) {
+          buildCrossFileTable(ctx, flag);
           return;
         }
+        buildTable(ctx, type, flag);
+        return;
+      }
+
+      // /m resolve <id>
+      if (sub === "resolve") {
+        const id = (rest[0] ?? "").toUpperCase();
+        if (!id) {
+          ctx.ui.notify(
+            "Usage: /m resolve <ERR-XXX | SEC-XXX | REV-XXX | TEST-XXX>",
+            "warning",
+          );
+          return;
+        }
+        ctx.ui.setStatus("worrie-status", "[MEMORY] resolving...");
         resolveEntry(ctx, id);
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+        return;
+      }
+
+      // /m config [key] [value]
+      if (sub === "config") {
+        const key = rest[0];
+        const value = rest[1];
+        if (!key) {
+          showConfig(ctx);
+          return;
+        }
+        if (key === "promptOnBlock" && (value === "true" || value === "false")) {
+          memoryConfig.promptOnBlock = value === "true";
+          pi.appendEntry("worrie-memory-config", { ...memoryConfig });
+          ctx.ui.notify(
+            `promptOnBlock ${memoryConfig.promptOnBlock ? "ON" : "OFF"}`,
+            "info",
+          );
+          return;
+        }
+        if (key === "maxEntries" && /^\d+$/.test(value ?? "")) {
+          memoryConfig.maxEntries = parseInt(value!, 10);
+          pi.appendEntry("worrie-memory-config", { ...memoryConfig });
+          ctx.ui.notify(
+            `Archive threshold set to ${memoryConfig.maxEntries}`,
+            "info",
+          );
+          return;
+        }
+        if (key === "reset") {
+          memoryConfig = { promptOnBlock: true, maxEntries: 10 };
+          pi.appendEntry("worrie-memory-config", { ...memoryConfig });
+          ctx.ui.notify("Memory config reset to defaults", "info");
+          return;
+        }
+        ctx.ui.notify(
+          "Usage: /m config [promptOnBlock|maxEntries|reset] [value]",
+          "warning",
+        );
         return;
       }
 
       // /m <type> "message" — log entry
-      const type = cmd;
+      const type = sub;
       let message = rest.join(" ").replace(/^"/, "").replace(/"$/, "").trim();
       if (!MEMORY_TYPES[type] || !message) {
-        ctx.ui.notify('Usage: /m <err|sec|rev|test|impl|code|proj> "message"', "warning");
+        ctx.ui.notify(
+          'Usage: /m <err|sec|rev|test|impl|code|proj> "message"',
+          "warning",
+        );
         return;
       }
+      ctx.ui.setStatus("worrie-status", "[MEMORY] logging...");
       logMemory(ctx, type, message);
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
     },
   });
 
-  // ── /ml <type> [--active|--resolved|--all|--count] ──
+  // ── /ml — list memory entries (shorthand for /m list) ──
   pi.registerCommand("ml", {
     description: "View memory entries as table",
     getArgumentCompletions: (prefix: string) => {
@@ -1401,7 +1482,11 @@ export default function (pi: ExtensionAPI) {
       const type = done[0];
       if (!MEMORY_TYPES[type]) return null;
       const flags = ["--active", "--resolved", "--all", "--count"];
-      if (done.length === 1) return filter(flags.map((f) => ({ value: f, label: f, description: f })), current);
+      if (done.length === 1)
+        return filter(
+          flags.map((f) => ({ value: f, label: f, description: f })),
+          current,
+        );
       return null;
     },
     handler: (args, ctx) => {
@@ -1409,101 +1494,20 @@ export default function (pi: ExtensionAPI) {
       const type = parts[0];
       const flag = parts[1] ?? "--active";
       if (!MEMORY_TYPES[type]) {
-        ctx.ui.notify("Usage: /ml <err|sec|rev|test|impl|code|proj> [--active|--resolved|--all|--count]", "warning");
+        buildCrossFileTable(ctx, flag);
         return;
       }
       buildTable(ctx, type, flag);
     },
   });
 
-  // ── /mlist [--active|--resolved|--all|--count] ──
-  pi.registerCommand("mlist", {
-    description: "Cross-file memory overview",
-    getArgumentCompletions: (prefix: string) => {
-      const text = prefix ?? "";
-      const parts = text.split(/\s+/);
-      const isAtEnd = text.endsWith(" ");
-      const current = isAtEnd ? "" : parts[parts.length - 1];
-      const flags = ["--active", "--resolved", "--all", "--count"];
-      return flags.filter((f) => f.startsWith(current)).map((f) => ({ value: f, label: f, description: f }));
-    },
-    handler: (args, ctx) => {
-      const flag = (args?.trim() ?? "--active").replace(/^\s*/, "");
-      buildCrossFileTable(ctx, flag);
-    },
-  });
-
-  // ── /memory archive ──
+  // ── /archive — archive overflow entries ──
   pi.registerCommand("archive", {
     description: "Archive overflow memory entries",
     handler: (args, ctx) => {
+      ctx.ui.setStatus("worrie-status", "[MEMORY] archiving...");
       archiveMemory(ctx);
-    },
-  });
-
-  // ── /memory config ──
-  pi.registerCommand("config", {
-    description: "Memory configuration settings",
-    getArgumentCompletions: (prefix: string) => {
-      const text = prefix ?? "";
-      const parts = text.split(/\s+/);
-      const isAtEnd = text.endsWith(" ");
-      const done = isAtEnd ? parts.filter(Boolean) : parts.slice(0, -1);
-      const current = isAtEnd ? "" : parts[parts.length - 1];
-
-      const filter = (items: { value: string; label: string }[], tok: string) =>
-        items.filter((i) => i.value.startsWith(tok));
-
-      if (done.length === 0) {
-        return filter([
-          { value: "autoLog", label: "autoLog" },
-          { value: "promptOnBlock", label: "promptOnBlock" },
-          { value: "maxEntries", label: "maxEntries" },
-          { value: "reset", label: "reset" },
-        ], current);
-      }
-      const key = done[0];
-      if (key === "autoLog" || key === "promptOnBlock") {
-        return [{ value: "true", label: "true" }, { value: "false", label: "false" }].filter((i) => i.value.startsWith(current));
-      }
-      if (key === "maxEntries") return null;
-      return [];
-    },
-    handler: async (args, ctx) => {
-      const parts = (args ?? "").trim().split(/\s+/);
-      const key = parts[0];
-      const value = parts[1];
-      if (!key) {
-        showConfig(ctx);
-        return;
-      }
-      if (key === "autoLog" && (value === "true" || value === "false")) {
-        memoryConfig.autoLog = value === "true";
-        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-        ctx.ui.setStatus("worrie-memory", `[MEM] auto-log ${memoryConfig.autoLog ? "ON" : "OFF"}`);
-        ctx.ui.notify(`autoLog ${memoryConfig.autoLog ? "ON" : "OFF"} - ${memoryConfig.autoLog ? "I will ask before saving" : "save manually with /m"}`, "info");
-        return;
-      }
-      if (key === "promptOnBlock" && (value === "true" || value === "false")) {
-        memoryConfig.promptOnBlock = value === "true";
-        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-        ctx.ui.notify(`promptOnBlock ${memoryConfig.promptOnBlock ? "ON" : "OFF"}`, "info");
-        return;
-      }
-      if (key === "maxEntries" && /^\d+$/.test(value ?? "")) {
-        memoryConfig.maxEntries = parseInt(value!, 10);
-        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-        ctx.ui.notify(`Archive threshold set to ${memoryConfig.maxEntries} entries`, "info");
-        return;
-      }
-      if (key === "reset") {
-        memoryConfig = { autoLog: true, promptOnBlock: true, maxEntries: 10 };
-        pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-        ctx.ui.setStatus("worrie-memory", "[MEM] auto-log ON");
-        ctx.ui.notify("Memory config reset to defaults", "info");
-        return;
-      }
-      ctx.ui.notify("Usage: /memory config [autoLog|promptOnBlock|maxEntries|reset] [value]", "warning");
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
     },
   });
 
@@ -1512,13 +1516,13 @@ export default function (pi: ExtensionAPI) {
     description:
       "Scan for junk files and debug traces, then remove approved items",
     handler: async (_args, ctx) => {
-      ctx.ui.setStatus("worrie-clean", "[CLEAN] scanning for artifacts...");
+      ctx.ui.setStatus("worrie-status", "[CLEAN] scanning...");
       const result: ScanResult = { junk: [], traces: [], empty: [] };
       scanForArtifacts(CWD, result);
-      ctx.ui.setStatus("worrie-clean", undefined);
       const junk = [...result.junk, ...result.empty];
       if (junk.length === 0 && result.traces.length === 0) {
         ctx.ui.notify("Nothing to clean.", "info");
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
       ctx.ui.notify(
@@ -1550,6 +1554,7 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify("Clean cancelled - nothing removed.", "info");
         }
       }
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
     },
   });
 
@@ -1565,6 +1570,7 @@ export default function (pi: ExtensionAPI) {
         );
         return;
       }
+      ctx.ui.setStatus("worrie-status", "[OBSIDIAN] syncing...");
       let projectName = readWorkspaceName();
 
       const projMemory = join(CONFIG_DIR, "rules", "project_memory.md");
@@ -1586,6 +1592,7 @@ export default function (pi: ExtensionAPI) {
             "Obsidian sync cancelled - no vault path given.",
             "info",
           );
+          ctx.ui.setStatus("worrie-status", "[NORMAL]");
           return;
         }
         vault = input.trim().replace(/[\\/]+$/, "");
@@ -1624,10 +1631,10 @@ export default function (pi: ExtensionAPI) {
         }
       } catch (err) {
         ctx.ui.notify(`Obsidian sync failed: ${err}`, "error");
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
 
-      // persist the vault path for future runs (LIFO entry in project_memory)
       if (persist && existsSync(projMemory)) {
         const content = readFileSync(projMemory, "utf8");
         if (!/\*\*Obsidian Vault Path\*\*: /.test(content)) {
@@ -1645,10 +1652,121 @@ export default function (pi: ExtensionAPI) {
         `Obsidian sync complete. ${copied.length} file(s) mirrored to ${dest}\n${copied.join("\n")}`,
         "info",
       );
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
     },
   });
 
-  // ── /rules ──
+  // ── /update — fetch uveworkflow templates ──
+  pi.registerCommand("update", {
+    description:
+      "Fetch latest templates from uveworkflow repo and update source files",
+    handler: async (_args, ctx) => {
+      ctx.ui.setStatus("worrie-status", "[UPDATE] fetching...");
+      const tmpDir = join(CWD, ".pi", ".update-tmp");
+      try {
+        ctx.ui.notify("Cloning uveworkflow repo...", "info");
+        execSync(
+          `git clone --depth 1 https://github.com/worriee/uveworkflow "${tmpDir}"`,
+          { timeout: 30000, stdio: "pipe" },
+        );
+
+        const srcRules = join(tmpDir, ".pi", "rules");
+        const srcSkills = join(tmpDir, ".pi", "skills");
+        const srcMemory = join(tmpDir, ".pi", "memory");
+        const srcArchives = join(tmpDir, ".pi", "archives");
+        const srcWorkspace = join(tmpDir, ".pi", "workspace.json");
+
+        const destRules = join(PKG_ROOT, "rules");
+        const destSkills = join(PKG_ROOT, "skills");
+        const destMemory = join(PKG_ROOT, "templates", "memory");
+        const destArchives = join(PKG_ROOT, "templates", "archives");
+        const destWorkspace = join(PKG_ROOT, "templates", "workspace.json");
+
+        let updated = 0;
+
+        // Copy rules
+        if (existsSync(srcRules)) {
+          mkdirSync(destRules, { recursive: true });
+          for (const f of readdirSync(srcRules)) {
+            const src = join(srcRules, f);
+            const dst = join(destRules, f);
+            if (statSync(src).isFile()) {
+              writeFileSync(dst, readFileSync(src));
+              updated++;
+            }
+          }
+        }
+
+        // Copy skills
+        if (existsSync(srcSkills)) {
+          mkdirSync(destSkills, { recursive: true });
+          for (const skill of readdirSync(srcSkills)) {
+            const skillDir = join(srcSkills, skill);
+            if (!statSync(skillDir).isDirectory()) continue;
+            const destSkillDir = join(destSkills, skill);
+            mkdirSync(destSkillDir, { recursive: true });
+            for (const f of readdirSync(skillDir)) {
+              const src = join(skillDir, f);
+              const dst = join(destSkillDir, f);
+              if (statSync(src).isFile()) {
+                writeFileSync(dst, readFileSync(src));
+                updated++;
+              }
+            }
+          }
+        }
+
+        // Copy memory templates
+        if (existsSync(srcMemory)) {
+          mkdirSync(destMemory, { recursive: true });
+          for (const f of readdirSync(srcMemory)) {
+            const src = join(srcMemory, f);
+            const dst = join(destMemory, f);
+            if (statSync(src).isFile()) {
+              writeFileSync(dst, readFileSync(src));
+              updated++;
+            }
+          }
+        }
+
+        // Copy archive templates
+        if (existsSync(srcArchives)) {
+          mkdirSync(destArchives, { recursive: true });
+          for (const f of readdirSync(srcArchives)) {
+            const src = join(srcArchives, f);
+            const dst = join(destArchives, f);
+            if (statSync(src).isFile()) {
+              writeFileSync(dst, readFileSync(src));
+              updated++;
+            }
+          }
+        }
+
+        // Copy workspace template
+        if (existsSync(srcWorkspace)) {
+          writeFileSync(destWorkspace, readFileSync(srcWorkspace));
+          updated++;
+        }
+
+        ctx.ui.notify(
+          `Update complete. ${updated} file(s) updated from uveworkflow.`,
+          "info",
+        );
+      } catch (err) {
+        ctx.ui.notify(`Update failed: ${err}`, "error");
+      } finally {
+        // Clean temp dir
+        try {
+          rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+          // best effort
+        }
+        ctx.ui.setStatus("worrie-status", "[NORMAL]");
+      }
+    },
+  });
+
+  // ── /rules — choose rules source ──
   pi.registerCommand("rules", {
     description:
       "Choose which rules to follow: default .pi rules, AGENTS.md, or CLAUDE.md",
@@ -1687,7 +1805,7 @@ export default function (pi: ExtensionAPI) {
     if (!p || p.delegating) return;
     if (["bash", "write", "edit"].includes(event.toolName)) {
       if (memoryConfig.promptOnBlock) {
-        ctx.ui.setStatus("worrie-blocked", "[BLOCKED] ask/plan is read-only");
+        ctx.ui.setStatus("worrie-subagent", "[BLOCKED] ask/plan is read-only");
       }
       return {
         block: true,
@@ -1712,50 +1830,27 @@ export default function (pi: ExtensionAPI) {
       const text = JSON.stringify(event.content ?? "");
       const stage = text.match(/\[STAGE (\d+\/\d+: [A-Z]+)\]/);
       if (stage)
-        ctx.ui.setStatus("worrie-stage", `[ORCH-FULL] stage ${stage[1]}`);
+        ctx.ui.setStatus("worrie-subagent", `[ORCH] stage ${stage[1]}`);
       const loop = text.match(/\[LOOP (\d+\/\d+: [A-Z]+ -> [A-Z]+)\]/);
-      if (loop) ctx.ui.setStatus("worrie-stage", `[ORCH-FULL] loop ${loop[1]}`);
+      if (loop)
+        ctx.ui.setStatus("worrie-subagent", `[ORCH] loop ${loop[1]}`);
     }
   });
 
-  // ── turn end: clear temp statuses, restore after delegation, auto-log wizard ──
+  // ── turn end: clear temp statuses, restore after delegation ──
   pi.on("agent_settled", async (_event, ctx) => {
     ctx.ui.setStatus("worrie-subagent", undefined);
-    ctx.ui.setStatus("worrie-blocked", undefined);
-    ctx.ui.setStatus("worrie-stage", undefined);
     if (activePersona && PERSONAS[activePersona].delegating) {
       activePersona = null;
       if (savedTools) {
         pi.setActiveTools(savedTools);
         savedTools = null;
       }
-      ctx.ui.setStatus("worrie-persona", "[NORMAL]");
+      ctx.ui.setStatus("worrie-status", "[NORMAL]");
     }
   });
 
-  pi.on("turn_end", async (event, ctx) => {
+  pi.on("turn_end", async (_event, ctx) => {
     ctx.ui.setStatus("worrie-subagent", undefined);
-    ctx.ui.setStatus("worrie-blocked", undefined);
-    // auto-log wizard for main-session personas (ask/plan) when work happened
-    if (
-      activePersona &&
-      !PERSONAS[activePersona].delegating &&
-      memoryConfig.autoLog &&
-      (event.toolResults?.length ?? 0) > 0
-    ) {
-      const ok = await ctx.ui.confirm(
-        "Save to memory?",
-        "Document this session?",
-      );
-      if (ok) {
-        const type = await ctx.ui.input(
-          "Memory type:",
-          "err / code / impl / sec / rev / test / proj",
-        );
-        const msg = await ctx.ui.input("Message:", "");
-        if (MEMORY_TYPES[type ?? ""] && msg) logMemory(ctx, type!, msg);
-        else ctx.ui.notify("Cancelled - nothing saved.", "info");
-      }
-    }
   });
 }

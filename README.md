@@ -22,7 +22,7 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 ### Pi - Persona Skills
 
-> the commands here are different from the prompt triggers I used in uveworkflow but they're still the same identical flow.
+> Single-letter persona commands match uveworkflow flags. Same flow, shorter names.
 
 **First run:**
 
@@ -30,53 +30,46 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 **Personas:**
 
-| Command                  | What it does                                                                                                                                         | Runs in                      |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `/ask <question>`        | Read-only analysis, can find/locate files                                                                                                            | main session                 |
-| `/plan <task>`           | Read-only planning, waits for approval                                                                                                               | main session                 |
-| `/coder <task>`          | Implementation                                                                                                                                       | worrie-coder subagent        |
-| `/debugger <problem>`    | Bug fixing, root-cause analysis                                                                                                                      | worrie-debugger subagent     |
-| `/orchestrator <prompt>` | Auto-detects the right persona from your prompt                                                                                                      | worrie-orchestrator subagent |
-| `/orch-full <task>`      | Full 11-stage pipeline: PLAN -> CODE -> TEST -> DEBUG -> SECURE -> DEBUG -> TEST -> CLEAN -> REVIEW -> DOCUMENT -> ASK (approval before every stage) | worrie-orchestrator subagent |
-| `/reviewer <target>`     | Code review (read-only on source)                                                                                                                    | worrie-reviewer subagent     |
-| `/secure <target>`       | Security scan, score 0-10                                                                                                                            | worrie-secure subagent       |
-| `/tester <target>`       | Test pipeline: typecheck -> lint -> unit -> integration -> E2E -> coverage                                                                           | worrie-tester subagent       |
-| `/normal`                | Exit persona mode, restore all tools                                                                                                                 | main session                 |
+| Command          | What it does                                                                                                                                         | Runs in                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `/a <question>`  | Read-only analysis, can find/locate files                                                                                                            | main session                 |
+| `/p <task>`      | Read-only planning, waits for approval                                                                                                               | main session                 |
+| `/c <task>`      | Implementation                                                                                                                                       | worrie-coder subagent        |
+| `/d <problem>`   | Bug fixing, root-cause analysis                                                                                                                      | worrie-debugger subagent     |
+| `/o <prompt>`    | Auto-detects the right persona from your prompt                                                                                                      | worrie-orchestrator subagent |
+| `/o auto <task>` | Full 11-stage pipeline: PLAN -> CODE -> TEST -> DEBUG -> SECURE -> DEBUG -> TEST -> CLEAN -> REVIEW -> DOCUMENT -> ASK (approval before every stage) | worrie-orchestrator subagent |
+| `/r <target>`    | Code review (read-only on source)                                                                                                                    | worrie-reviewer subagent     |
+| `/s <target>`    | Security scan, score 0-10                                                                                                                            | worrie-secure subagent       |
+| `/t <target>`    | Test pipeline: typecheck -> lint -> unit -> integration -> E2E -> coverage                                                                           | worrie-tester subagent       |
+| `/normal`        | Exit persona mode, restore all tools                                                                                                                 | main session                 |
 
-**Read-only enforcement:** `/ask` and `/plan` get `read`, `grep`, `find`, `ls` only. Write, edit, and bash are blocked at the tool level. They can still write memory when you explicitly tell them to.
+**Read-only enforcement:** `/a` and `/p` get `read`, `grep`, `find`, `ls` only. Write, edit, and bash are blocked at the tool level.
 
-**Status bar:** persona state, subagent activity, memory auto-log state, and orchestrator stage progress are shown in the footer (e.g. `[CODER] active`, `[ORCH-FULL] stage 3/11: TEST`).
+**Status bar:** 2 segments — `worrie-status` (persona mode or `[NORMAL]`) + `worrie-subagent` (only when subagent working). Persona status persists until `/normal`. Utility status clears when done.
 
 **Memory:**
 
 | Command                                          | What it does                                   |
 | ------------------------------------------------ | ---------------------------------------------- |
+| `/context`                                        | Prompt → update project_memory.md              |
+| `/error`                                          | Prompt → log to error_memory.md                |
+| `/codebase`                                       | Prompt → update codebase_map.md                |
 | `/m <err\|sec\|rev\|test\|impl\|code\|proj> "msg"` | Create entry, auto-assign next tracking number |
-| `/m r <ERR-XXX \| SEC-XXX \| ...>`                | Resolve entry manually (AI-free)               |
-| `/ml <type> [--active\|--resolved\|--all\|--count]` | View entries as table                          |
-| `/mlist [--active\|--resolved\|--all\|--count]`   | Cross-file overview table                      |
+| `/m resolve <ERR-XXX \| SEC-XXX \| ...>`           | Resolve entry manually (AI-free)               |
+| `/m list [type] [--active\|--resolved\|--all]`      | View entries as table                          |
+| `/ml [type] [--active\|--resolved\|--all]`          | Shorthand for `/m list`                        |
 | `/archive`                                        | Archive overflow (threshold: 10, configurable) |
-| `/config [autoLog\|promptOnBlock\|maxEntries\|reset]` | Toggle settings               |
+| `/m config [promptOnBlock\|maxEntries\|reset]`      | Toggle settings                                |
 
 Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (implementation_memory.md), `sec` (security_memory.md), `rev` (review_memory.md), `test` (test_memory.md), `proj` (project_memory.md). Entries use LIFO ordering, `### [RESOLVED] Title (ERR-XXX)` migration, and history is never deleted.
 
-**Clean:**
+**Utilities:**
 
+- **`/init`** — Initialize workspace.json only (without creating memory/agent files).
 - **`/clean`** — Scans for junk files (`.bak`, `.tmp`, `.log`, empty files) and debug traces (console.*, debugger, TODO, FIXME). Shows the list, asks your approval, removes approved junk files only. Source files are never touched.
-
-**Obsidian:**
-
 - **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault path once, remembers it, always overwrites with the latest version. Run `/setup` first.
-
-**Rules:**
-
-- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (embedded slim rule set from the package), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Enforced via pi's native `AGENTS.override.md` slot in the project root (auto-restored on session start). `/setup` asks this once when a conflicting rules file exists; afterwards use `/rules`.
-
-**Memory config:**
-
-- `autoLog` — after read-only persona work, asks "Save to memory?" (default ON)
-- `promptOnBlock` — shows `[BLOCKED]` status when a read-only persona tries to write (default ON)
-- `maxEntries` — archive threshold, default 10
+- **`/update`** — Fetches latest templates from [uveworkflow](https://github.com/worriee/uveworkflow) repo and updates source files (rules, skills, templates). Preserves installed workspace memory files.
+- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (embedded slim rule set from the package), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Enforced via pi's native `AGENTS.override.md` slot in the project root (auto-restored on session start).
 
 ---
 
@@ -90,7 +83,7 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Single     | One agent, one task                                                                                                                                           |
 | Parallel   | Several agents at once (max 8, 4 concurrent)                                                                                                                  |
-| Chain      | Sequential steps; Takes previous subagent finished summary task then pass it to next subagent, performs well with `/orch-full` command for 11 pipeline stages |
+| Chain      | Sequential steps; Takes previous subagent finished summary task then pass it to next subagent, performs well with `/o auto` command for 11 pipeline stages |
 | Background | Runs in background, widget shows progress, collect with `subagent_wait`                                                                                       |
 
 **Commands:**
