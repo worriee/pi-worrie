@@ -68,7 +68,7 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 - **`/clean`** — Scans for junk files (`.bak`, `.tmp`, `.log`, empty files) and debug traces (console.*, debugger, TODO, FIXME). Shows the list, asks your approval, removes approved junk files only. Source files are never touched.
 - **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault path once, remembers it, always overwrites with the latest version. Run `/setup` first.
 - **`/update`** — Fetches latest templates from [uveworkflow](https://github.com/worriee/uveworkflow) repo and updates source files (rules, skills, templates). Preserves installed workspace memory files.
-- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (embedded slim rule set from the package), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Enforced via pi's native `AGENTS.override.md` slot in the project root (auto-restored on session start).
+- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (embedded slim rule set from the package via `AGENTS.override.md`), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Selecting AGENTS.md/CLAUDE.md removes the override file so the real file takes priority (pi natively loads `AGENTS.override.md` → `AGENTS.md` → `CLAUDE.md`, first match wins).
 
 ---
 

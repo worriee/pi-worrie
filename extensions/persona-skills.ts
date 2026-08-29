@@ -113,18 +113,21 @@ function rulesOptions(): { label: string; source: RulesSource }[] {
 }
 
 function applyRulesSource(source: RulesSource): boolean {
-  let content: string;
-  if (source === "pi") {
-    const rules = buildSubagentRules(loadWorkspaceRules()).trim();
-    content = rules
-      ? `# Rules Override (pi-worrie)\n\n${rules}`
-      : "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
-  } else {
-    const file = source === "agents" ? "AGENTS.md" : "CLAUDE.md";
-    const p = join(CWD, file);
-    if (!existsSync(p)) return false;
-    content = readFileSync(p, "utf8");
+  if (source !== "pi") {
+    // ponytail: pi loads AGENTS.override.md > AGENTS.md > CLAUDE.md, first match wins.
+    // Selecting AGENTS.md/CLAUDE.md must NOT create an override — it would shadow the real file.
+    // Delete any existing override so pi falls back to the real file natively.
+    try {
+      if (existsSync(OVERRIDE_FILE)) rmSync(OVERRIDE_FILE);
+      return true;
+    } catch {
+      return false;
+    }
   }
+  const rules = buildSubagentRules(loadWorkspaceRules()).trim();
+  const content = rules
+    ? `# Rules Override (pi-worrie)\n\n${rules}`
+    : "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
   try {
     writeFileSync(
       OVERRIDE_FILE,
@@ -1694,7 +1697,7 @@ export default function (pi: ExtensionAPI) {
       writeRulesSource(chosen.source);
       if (!applyRulesSource(chosen.source)) {
         ctx.ui.notify(
-          `Could not write AGENTS.override.md for ${chosen.label}.`,
+          `Could not apply rules for ${chosen.label}.`,
           "warning",
         );
         return;
