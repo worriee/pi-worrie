@@ -26,7 +26,7 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 **First run:**
 
-- **`/setup`** — Initialize workspace. Creates `.pi/workspace.json`, memory files, archive files, and the 7 `worrie-*` agent files in `.pi/agents/` (planner, coder, debugger, orchestrator, reviewer, secure, tester). Never overwrites existing files.
+- **`/setup`** — Initialize workspace. Creates `.pi/workspace.json`, memory files, archive files, rules files (`.clinerules` + `system_instructions.md` beside `project_memory.md`, uveworkflow layout), and the 7 `worrie-*` agent files in `.pi/agents/` (planner, coder, debugger, orchestrator, reviewer, secure, tester). Never overwrites existing files.
 
 **Personas:**
 
@@ -68,7 +68,7 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 - **`/clean`** — Scans for junk files (`.bak`, `.tmp`, `.log`, empty files) and debug traces (console.*, debugger, TODO, FIXME). Shows the list, asks your approval, removes approved junk files only. Source files are never touched.
 - **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault path once, remembers it, always overwrites with the latest version. Run `/setup` first.
 - **`/update`** — Fetches latest templates from [uveworkflow](https://github.com/worriee/uveworkflow) repo and updates source files (rules, skills, templates). Preserves installed workspace memory files.
-- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (embedded slim rule set from the package via `AGENTS.override.md`), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Selecting AGENTS.md/CLAUDE.md removes the override file so the real file takes priority (pi natively loads `AGENTS.override.md` → `AGENTS.md` → `CLAUDE.md`, first match wins).
+- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (the AI reads the generated `.pi/rules/.clinerules` + `system_instructions.md` via `AGENTS.override.md`; embedded slim rules fallback on old workspaces), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Selecting AGENTS.md/CLAUDE.md removes the override file so the real file takes priority (pi natively loads `AGENTS.override.md` → `AGENTS.md` → `CLAUDE.md`, first match wins).
 
 ---
 

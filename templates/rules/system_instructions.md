@@ -46,27 +46,6 @@
 - Workspace Init: Any flag → check `workspace.json`. If uninitialized → init first. Log init event.
 - Archival Protocol: `-archive` → scan eligible files. Archive oldest when >10 entries. Append to pre-created archives. Log `[ARCHIVAL]`.
 
-## 3.5 Memory Workflow (`/m`, `/ml`, `/mlist`)
-
-- `/m <err|sec|rev|test|impl|code|proj> "message"` — Create entry, auto-assign ID
-- `/m r <ERR-XXX>` — Resolve entry (AI-free). Moves to Section 2
-- `/ml <type> [--active|--resolved|--all|--count]` — Table view
-- `/mlist [--active|--resolved|--all|--count]` — Cross-file overview
-- `/archive` — Archive overflow
-- `/config` — Settings
-
-Memory types: err→error_memory.md, code→codebase_map.md, impl→implementation_memory.md, sec→security_memory.md, rev→review_memory.md, test→test_memory.md, proj→project_memory.md
-
-Resolution: On fix → migrate Section 1 → Section 2 SAME. Format: `### [RESOLVED] Title (TYPE-XXX)`. BAN delete/truncate Section 2.
-
-## 3.6 Utility Commands
-
-- `/normal` — Exit persona mode, restore all tools
-- `/rules` — Choose rules source (default .pi, AGENTS.md, or CLAUDE.md)
-- `/updater` — Run `pi update --all` to update extensions
-- `/subagents` — List running subagents
-- `/worrie-themed [on|off]` — Toggle custom status bar
-
 ## 4. Rule Immutability
 
 - Zero-Tolerance Tampering: BAN edit/delete `.pi/rules/` or `.pi/skills/` files (`system_instructions.md`, `.clinerules`, `skills/*/SKILL.md`).
@@ -95,5 +74,28 @@ Resolution: On fix → migrate Section 1 → Section 2 SAME. Format: `### [RESOL
 - Immediate Resolution: Test → Section 2 SAME `### [RESOLVED] Desc (TEST-XXX)`. Review → Section 2 SAME `### [RESOLVED] Desc (REVIEW-XXX)`. Security → Section 2 SAME `### [RESOLVED] Desc (SEC-XXX)` + update score Section 3. All = CRIT if not migrated SAME.
 - Tracking Numbers: Retain original (TEST/REVIEW/SEC/ERR-XXX) in resolved header. MANDATORY.
 - Historical Preservation: Section 2 resolved entries = immutable. BAN delete/truncate/rewrite. New entries prepended LIFO.
+
+## Memory Workflow (`/m`, `/ml`)
+
+- `/m list [type] [--active|--resolved|--all|--count]` — View entries as table (no type = cross-file overview)
+- `/m resolve <ERR-XXX | SEC-XXX | REV-XXX | TEST-XXX>` — Resolve entry (AI-free). Moves to Section 2
+- `/ml [type] [--active|--resolved|--all|--count]` — Shorthand for `/m list`
+- `/m config [promptOnBlock|maxEntries|reset]` — Settings
+- `/archive` — Archive overflow (>10 entries per section)
+- `/context` / `/error` / `/codebase` — Prompt → update project_memory.md / error_memory.md / codebase_map.md
+
+**Memory types:** err=error_memory.md (ERR-NNN), code=codebase_map.md, impl=implementation_memory.md (FLOW-NNN), sec=security_memory.md (SEC-NNN), rev=review_memory.md (REVIEW-NNN), test=test_memory.md (TEST-NNN), proj=project_memory.md
+
+**Logging is AI-managed:** the AI itself appends new entries with its own tracking IDs (uveworkflow style). No manual log command.
+
+**Resolution:** On fix → migrate Section 1 → Section 2 SAME. Format: `### [RESOLVED] Title (TYPE-XXX)`. BAN delete/truncate Section 2.
+
+## Utility Commands
+
+- `/normal` — Exit persona mode, restore all tools
+- `/rules` — Choose rules source (default .pi, AGENTS.md, or CLAUDE.md)
+- `/updater` — Run `pi update --all` to update extensions
+- `/subagents` — List running subagents
+- `/worrie-themed [on|off]` — Toggle custom status bar
 
 <!-- c: worrie -->

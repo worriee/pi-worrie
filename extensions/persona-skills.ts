@@ -124,10 +124,21 @@ function applyRulesSource(source: RulesSource): boolean {
       return false;
     }
   }
-  const rules = buildSubagentRules(loadWorkspaceRules()).trim();
-  const content = rules
-    ? `# Rules Override (pi-worrie)\n\n${rules}`
-    : "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
+  // Default rules: pointer to the generated .pi/rules files when they exist
+  // (the AI then follows the FULL rules, incl. the appended pi-worrie command
+  // sections). Fall back to embedded slim sections for old workspaces whose
+  // files were generated before /setup wrote them.
+  const cli = join(CONFIG_DIR, "rules", ".clinerules");
+  const sys = join(CONFIG_DIR, "rules", "system_instructions.md");
+  const pointer =
+    "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
+  let content: string;
+  if (existsSync(cli) && existsSync(sys)) {
+    content = pointer;
+  } else {
+    const rules = buildSubagentRules(loadWorkspaceRules()).trim();
+    content = rules ? `# Rules Override (pi-worrie)\n\n${rules}` : pointer;
+  }
   try {
     writeFileSync(
       OVERRIDE_FILE,
@@ -323,9 +334,9 @@ const PKG_ROOT = join(extensionDir(), "..");
 
 function loadWorkspaceRules(): string {
   try {
-    const cli = readFileSync(join(PKG_ROOT, "rules", ".clinerules"), "utf8");
+    const cli = readFileSync(join(PKG_ROOT, "templates", "rules", ".clinerules"), "utf8");
     const sys = readFileSync(
-      join(PKG_ROOT, "rules", "system_instructions.md"),
+      join(PKG_ROOT, "templates", "rules", "system_instructions.md"),
       "utf8",
     );
     return `${cli}\n\n---\n\n${sys}`;
@@ -337,12 +348,12 @@ function loadWorkspaceRules(): string {
 const SUBAGENT_RULES_SECTIONS = [
   "System Boundaries",
   "Strict Rule Modification Constraints",
-  "MANDATORY TIMESTAMP COMPUTATION RULE",
-  "NEWEST-ON-TOP SORTING ENFORCEMENT",
-  "BEGINNER-FRIENDLY HIGH-DETAIL CLARITY MANDATE",
-  "IMMUTABLE SECTION TITLE AND LOG PROTECTION",
-  "CRITICAL DATA RETENTION & HISTORICAL PRESERVATION",
-  "IMMEDIATE RESOLUTION MANDATE",
+  "Mandatory Timestamp",
+  "LIFO Sorting",
+  "Beginner Clarity",
+  "Header & Log Protection",
+  "Data Retention",
+  "Resolution Mandates (Test/Review/Security/Error)",
 ];
 
 function buildSubagentRules(full: string): string {
@@ -454,7 +465,7 @@ function buildAgentFile(
   rulesText: string,
   agentName: string,
 ): string {
-  const skillPath = join(PKG_ROOT, "skills", spec.skill, "SKILL.md");
+  const skillPath = join(PKG_ROOT, "templates", "skills", spec.skill, "SKILL.md");
   let skill = readFileSync(skillPath, "utf8");
   skill = skill.replace(/\s*<!--\s*c: worrie\s*-->\s*$/, "");
   if (skill.startsWith("---")) {
@@ -1033,6 +1044,17 @@ export default function (pi: ExtensionAPI) {
         created++;
       }
 
+      // generate rules beside project_memory.md (uveworkflow layout) so the
+      // default /rules override pointer resolves. Never overwrites existing.
+      for (const f of [".clinerules", "system_instructions.md"]) {
+        const src = join(PKG_ROOT, "templates", "rules", f);
+        const dst = join(CONFIG_DIR, "rules", f);
+        if (existsSync(src) && !existsSync(dst)) {
+          writeFileSync(dst, readFileSync(src));
+          created++;
+        }
+      }
+
       for (const [file, template] of Object.entries(ARCHIVE_TEMPLATES)) {
         const path = join(ARCHIVES_DIR, file);
         if (!existsSync(path)) {
@@ -1486,9 +1508,13 @@ export default function (pi: ExtensionAPI) {
       let persist = false;
       if (existsSync(projMemory)) {
         const m = readFileSync(projMemory, "utf8").match(
-          /\*\*Obsidian Vault Path\*\*: (.+)/,
+          /\*\*(?:Obsidian )?Vault Path\*\*: (.+)/,
         );
-        if (m) vault = m[1].trim();
+        if (m) {
+          vault = m[1].trim();
+          // placeholder is not a real path — treat as unset and prompt
+          if (vault.startsWith("[set after")) vault = "";
+        }
       }
       if (!vault) {
         const input = await ctx.ui.input(
@@ -1545,13 +1571,22 @@ export default function (pi: ExtensionAPI) {
 
       if (persist && existsSync(projMemory)) {
         const content = readFileSync(projMemory, "utf8");
-        if (!/\*\*Obsidian Vault Path\*\*: /.test(content)) {
+        const line = `- **Vault Path**: ${vault}`;
+        if (/^\s*- \*\*(?:Obsidian )?Vault Path\*\*: .+$/m.test(content)) {
+          // replace existing placeholder/entry in place (uveworkflow template)
+          writeFileSync(
+            projMemory,
+            content.replace(
+              /^(\s*- \*\*(?:Obsidian )?Vault Path\*\*: ).+$/m,
+              `$1${vault}`,
+            ),
+          );
+        } else {
           const anchor = content.indexOf("\n## 1.");
-          const line = `\n- **Obsidian Vault Path**: ${vault}\n`;
           const next =
             anchor >= 0
-              ? content.slice(0, anchor) + line + content.slice(anchor)
-              : content.replace(/\s*$/, "") + "\n" + line;
+              ? content.slice(0, anchor) + `\n${line}\n` + content.slice(anchor)
+              : content.replace(/\s*$/, "") + `\n${line}\n`;
           writeFileSync(projMemory, next);
         }
       }
@@ -1584,8 +1619,8 @@ export default function (pi: ExtensionAPI) {
         const srcArchives = join(tmpDir, ".pi", "archives");
         const srcWorkspace = join(tmpDir, ".pi", "workspace.json");
 
-        const destRules = join(PKG_ROOT, "rules");
-        const destSkills = join(PKG_ROOT, "skills");
+        const destRules = join(PKG_ROOT, "templates", "rules");
+        const destSkills = join(PKG_ROOT, "templates", "skills");
         const destMemory = join(PKG_ROOT, "templates", "memory");
         const destArchives = join(PKG_ROOT, "templates", "archives");
         const destWorkspace = join(PKG_ROOT, "templates", "workspace.json");

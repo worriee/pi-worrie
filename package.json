@@ -28,7 +28,7 @@
       "./extensions/worrie-themed.ts"
     ],
     "skills": [
-      "./skills"
+      "./templates/skills"
     ]
   },
   "peerDependencies": {
