@@ -1,6 +1,8 @@
 # pi-worrie
 
-My personal agentic workflow. The same as [uveworkflow](https://github.com/worriee/uveworkflow) but better :>
+My personal agentic workflow. The same as [uveworkflow](https://github.com/worriee/uveworkflow) but better.
+
+_DISCONTINUED. Not enough ram for local ai and broke enough to buy credits. Will continue this soon._
 
 If you wanna try then install [here.](#installation)
 
