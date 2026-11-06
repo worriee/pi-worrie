@@ -23,17 +23,14 @@
   "pi": {
     "extensions": [
       "./extensions/updater.ts",
-      "./extensions/persona-skills.ts",
+      "./extensions/agents.ts",
       "./extensions/subagents.ts",
       "./extensions/worrie-themed.ts"
-    ],
-    "skills": [
-      "./templates/skills"
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.74.0 <1",
-    "@earendil-works/pi-tui": ">=0.74.0 <1"
+    "@earendil-works/pi-coding-agent": ">=0.74.0 <2",
+    "@earendil-works/pi-tui": ">=0.74.0 <2"
   },
   "dependencies": {
     "typebox": "^1.3.7"

@@ -79,74 +79,28 @@ function nextTrackingId(content: string, prefix: string): string {
 }
 
 // ===================================================================
-// Rules source (pi rules vs AGENTS.md/CLAUDE.md)
+// Rules bootstrap: AGENTS.md holds one pointer block, no source choice
 // ===================================================================
 
-const RULES_SOURCE_FILE = join(CONFIG_DIR, "rules-source.json");
-const OVERRIDE_FILE = join(CWD, "AGENTS.override.md");
-const RULES_SOURCES = ["pi", "agents", "claude"] as const;
-type RulesSource = (typeof RULES_SOURCES)[number];
+const RULES_POINTER = `# Workspace Rules (pi-worrie)
+Read and follow \`.pi/rules/instructions.md\`.
+Memory: \`.pi/memory/\` · archives: \`.pi/archives/\` — findings logged first, then presented.`;
 
-function readRulesSource(): RulesSource | null {
+function ensureAgentRulesBlock(): void {
   try {
-    const s = JSON.parse(readFileSync(RULES_SOURCE_FILE, "utf8")).source;
-    return RULES_SOURCES.includes(s) ? s : null;
+    const p = join(CWD, "AGENTS.md");
+    const content = existsSync(p)
+      ? readFileSync(p, "utf8").replace(/\s+$/, "")
+      : "";
+    if (content.includes(RULES_POINTER)) return;
+    const credit = "<!-- c: worrie -->";
+    const idx = content.lastIndexOf(credit);
+    const block = idx >= 0
+      ? `${content.slice(0, idx).replace(/\s+$/, "")}\n\n${RULES_POINTER}\n\n${credit}\n`
+      : `${content}\n\n${RULES_POINTER}\n\n${credit}\n`;
+    writeFileSync(p, block);
   } catch {
-    return null;
-  }
-}
-
-function writeRulesSource(source: RulesSource): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(RULES_SOURCE_FILE, `${JSON.stringify({ source }, null, 2)}\n`);
-}
-
-function rulesOptions(): { label: string; source: RulesSource }[] {
-  const opts: { label: string; source: RulesSource }[] = [
-    { label: "Use current extension rules (Default)", source: "pi" },
-  ];
-  if (existsSync(join(CWD, "AGENTS.md")))
-    opts.push({ label: "Use AGENTS.md", source: "agents" });
-  if (existsSync(join(CWD, "CLAUDE.md")))
-    opts.push({ label: "Use CLAUDE.md", source: "claude" });
-  return opts;
-}
-
-function applyRulesSource(source: RulesSource): boolean {
-  if (source !== "pi") {
-    // ponytail: pi loads AGENTS.override.md > AGENTS.md > CLAUDE.md, first match wins.
-    // Selecting AGENTS.md/CLAUDE.md must NOT create an override — it would shadow the real file.
-    // Delete any existing override so pi falls back to the real file natively.
-    try {
-      if (existsSync(OVERRIDE_FILE)) rmSync(OVERRIDE_FILE);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  // Default rules: pointer to the generated .pi/rules files when they exist
-  // (the AI then follows the FULL rules, incl. the appended pi-worrie command
-  // sections). Fall back to embedded slim sections for old workspaces whose
-  // files were generated before /setup wrote them.
-  const cli = join(CONFIG_DIR, "rules", ".clinerules");
-  const sys = join(CONFIG_DIR, "rules", "system_instructions.md");
-  const pointer =
-    "# Rules Override (pi-worrie)\n\nFollow the rules inside the .pi folder strictly:\n- Read `.pi/rules/.clinerules`\n- Read `.pi/rules/system_instructions.md`\n";
-  let content: string;
-  if (existsSync(cli) && existsSync(sys)) {
-    content = pointer;
-  } else {
-    const rules = buildSubagentRules(loadWorkspaceRules()).trim();
-    content = rules ? `# Rules Override (pi-worrie)\n\n${rules}` : pointer;
-  }
-  try {
-    writeFileSync(
-      OVERRIDE_FILE,
-      `${content.replace(/\s+$/, "")}\n\n<!-- c: worrie -->\n`,
-    );
-    return true;
-  } catch {
-    return false;
+    // read-only workspace — skip silently
   }
 }
 
@@ -326,20 +280,40 @@ function extensionDir(): string {
   try {
     return dirname(fileURLToPath(import.meta.url));
   } catch {
-    return __dirname;
+    // FSM context when import.meta unusable — parent of extensions dir
+    return dirname(process.argv[1] ?? process.cwd());
   }
 }
 
 const PKG_ROOT = join(extensionDir(), "..");
 
+// pi-worrie mapping section appended to generated workspace instructions.md
+// (embed keeps the pure upstream file; the workspace gets section + credit)
+const FLAG_MAP = `## pi-worrie Flag Mapping
+Dash-flag rules in this file map to same-named slash commands in pi:
+- \`/init\` — \`-init\` plus the full \`-setup\` chain (workspace.json, memory, archives, rules, agents)
+- \`/context\` / \`/error\` / \`/codebase\` — flag-triggered updates handled via prompts
+- \`/archive\` / \`/clean\` — per \`Archival\` / \`System Clean\`
+- \`/obsidian\` / \`/update\` — per \`OBSIDIAN SYNC\` / \`UPDATE FLAG\`; update refreshes embed/ rules+skills and the workspace rules file
+- \`/normal\` — exit persona mode, restore tools (pi extension equivalent)
+- Personas: \`/a /p /c /d /o /s /r /t\` — \`FINDINGS GATE\` applies, logs first
+- pi-extension helpers: \`/subagents\` \`/updater\` \`/worrie-themed\`
+- No memory list commands: the AI reads memory files directly per this file.`;
+
+// upstream instructions.md 1:1 + pi-worrie mapping, single credit at EOF
+function buildWorkspaceInstructions(upstream: string): string {
+  const base = upstream
+    .replace(/\s*<!-- c: worrie -->\s*$/, "")
+    .replace(/\s+$/, "");
+  return `${base}\n\n${FLAG_MAP}\n\n<!-- c: worrie -->\n`;
+}
+
 function loadWorkspaceRules(): string {
   try {
-    const cli = readFileSync(join(PKG_ROOT, "templates", "rules", ".clinerules"), "utf8");
-    const sys = readFileSync(
-      join(PKG_ROOT, "templates", "rules", "system_instructions.md"),
+    return readFileSync(
+      join(extensionDir(), "embed", "rules", "instructions.md"),
       "utf8",
     );
-    return `${cli}\n\n---\n\n${sys}`;
   } catch {
     return "";
   }
@@ -397,7 +371,7 @@ const AGENT_SPECS: Record<
     tools: "read, grep, find, ls, bash, write, edit",
     memoryProtocol: `## Memory Protocol
 - BAN edit rule files. State → memory only.
-- § \`.clinerules\` §Memory Workflow for commands.
+- § \`instructions.md\` §pi-worrie Flag Mapping for commands.
 - Write: err→error_memory.md (ERR-NNN), code→codebase_map.md, impl→implementation_memory.md (FLOW-NNN), sec→security_memory.md (SEC-NNN), rev→review_memory.md (REVIEW-NNN), test→test_memory.md (TEST-NNN), proj→project_memory.md
 - LIFO top of Section 1. ID: \`[TYPE-XXX]\` (3-digit zero-padded).
 - BAN delete/truncate Section 2 (immutable history).
@@ -465,7 +439,7 @@ function buildAgentFile(
   rulesText: string,
   agentName: string,
 ): string {
-  const skillPath = join(PKG_ROOT, "templates", "skills", spec.skill, "SKILL.md");
+  const skillPath = join(PKG_ROOT, "extensions", "embed", "skills", spec.skill, "SKILL.md");
   let skill = readFileSync(skillPath, "utf8");
   skill = skill.replace(/\s*<!--\s*c: worrie\s*-->\s*$/, "");
   if (skill.startsWith("---")) {
@@ -542,16 +516,6 @@ function loadArchiveTemplate(file: string): string {
   }
 }
 
-function loadProjectMemoryTemplate(): string {
-  try {
-    return readFileSync(
-      join(PKG_ROOT, "templates", "rules", "project_memory.md"),
-      "utf8",
-    );
-  } catch {
-    return "";
-  }
-}
 
 const MEMORY_TEMPLATES: Record<string, string> = {
   "error_memory.md": loadMemoryTemplate("error_memory.md"),
@@ -570,7 +534,16 @@ const ARCHIVE_TEMPLATES: Record<string, string> = {
   "test_archive.md": loadArchiveTemplate("test_archive.md"),
 };
 
-const PROJECT_MEMORY_TEMPLATE = loadProjectMemoryTemplate();
+const PROJECT_MEMORY_TEMPLATE = () => {
+  try {
+    return readFileSync(
+      join(PKG_ROOT, "extensions", "embed", "rules", "project_memory.md"),
+      "utf8",
+    );
+  } catch {
+    return "# Project Memory & Context Tracker\n";
+  }
+};
 
 // ===================================================================
 // Memory helpers
@@ -974,8 +947,6 @@ export default function (pi: ExtensionAPI) {
     } catch {
       // ephemeral session
     }
-    const saved = readRulesSource();
-    if (saved) applyRulesSource(saved);
     if (!setupDone()) {
       ctx.ui.setStatus("worrie-status", "[SETUP] not initialized");
     } else if (activePersona) {
@@ -988,11 +959,11 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── /setup ──
-  pi.registerCommand("setup", {
+  // ── /init (+ /setup alias): full workspace initialization ──
+  const initCommand = {
     description:
-      "Initialize workspace: workspace.json, memory files, agent files",
-    handler: async (_args, ctx) => {
+      "Initialize workspace: workspace.json, memory, archives, rules, agent files",
+    handler: async (_args: unknown, ctx: any) => {
       ctx.ui.setStatus("worrie-status", "[SETUP] initializing...");
       mkdirSync(MEMORY_DIR, { recursive: true });
       mkdirSync(AGENTS_DIR, { recursive: true });
@@ -1040,19 +1011,27 @@ export default function (pi: ExtensionAPI) {
       const projPath = join(CONFIG_DIR, "rules", "project_memory.md");
       if (!existsSync(projPath)) {
         mkdirSync(dirname(projPath), { recursive: true });
-        writeFileSync(projPath, PROJECT_MEMORY_TEMPLATE);
+        writeFileSync(
+          projPath,
+          readFileSync(
+            join(PKG_ROOT, "extensions", "embed", "rules", "project_memory.md"),
+            "utf8",
+          ),
+        );
         created++;
       }
 
-      // generate rules beside project_memory.md (uveworkflow layout) so the
-      // default /rules override pointer resolves. Never overwrites existing.
-      for (const f of [".clinerules", "system_instructions.md"]) {
-        const src = join(PKG_ROOT, "templates", "rules", f);
-        const dst = join(CONFIG_DIR, "rules", f);
-        if (existsSync(src) && !existsSync(dst)) {
-          writeFileSync(dst, readFileSync(src));
-          created++;
-        }
+      // generate rules beside project_memory.md (uveworkflow naming). Never
+      // overwrites: /update is the refresh path for instructions.md content.
+      const instrSrc = readFileSync(
+        join(PKG_ROOT, "extensions", "embed", "rules", "instructions.md"),
+        "utf8",
+      );
+      const instrDst = join(CONFIG_DIR, "rules", "instructions.md");
+      if (!existsSync(instrDst)) {
+        mkdirSync(dirname(instrDst), { recursive: true });
+        writeFileSync(instrDst, buildWorkspaceInstructions(instrSrc));
+        created++;
       }
 
       for (const [file, template] of Object.entries(ARCHIVE_TEMPLATES)) {
@@ -1078,70 +1057,18 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      if (!readRulesSource()) {
-        const opts = rulesOptions();
-        if (opts.length > 1) {
-          const picked = await ctx.ui.select(
-            "Which rules should this workspace follow?",
-            opts.map((o) => o.label),
-          );
-          const chosen = opts.find((o) => o.label === picked);
-          if (chosen) {
-            writeRulesSource(chosen.source);
-            applyRulesSource(chosen.source);
-          }
-        }
-      }
+      ensureAgentRulesBlock();
 
       ctx.ui.setStatus("worrie-status", "[NORMAL]");
       ctx.ui.notify(
-        `Setup complete. ${agents} agent(s), ${created} memory/archive file(s). Commands: /a /p /c /d /o /s /r /t /normal /context /error /codebase /m /ml /clean /obsidian /update /rules`,
+        `Initialization complete. ${agents} agent(s), ${created} memory/archive/rule file(s). Commands: /a /p /c /d /o /s /r /t /normal /context /error /codebase /clean /archive /obsidian /update`,
         "info",
       );
     },
-  });
+  };
+  pi.registerCommand("init", initCommand);
+  pi.registerCommand("setup", { ...initCommand, description: "Alias for /init" });
 
-  // ── /init (init workspace.json only) ──
-  pi.registerCommand("init", {
-    description: "Initialize workspace.json only",
-    handler: async (_args, ctx) => {
-      ctx.ui.setStatus("worrie-status", "[INIT] setting up...");
-      mkdirSync(CONFIG_DIR, { recursive: true });
-      if (!setupDone()) {
-        const name = await ctx.ui.input("Enter project name:", "");
-        if (!name) {
-          ctx.ui.notify("Init cancelled.", "warning");
-          ctx.ui.setStatus("worrie-status", "[NORMAL]");
-          return;
-        }
-        const slug = name
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "");
-        writeFileSync(
-          WORKSPACE_FILE,
-          JSON.stringify(
-            {
-              workspace_id: slug,
-              project_name: name,
-              initialized_at: pstNow(),
-              initialized_by: "pi-worrie",
-            },
-            null,
-            2,
-          ) + "\n// c: worrie\n",
-        );
-        ctx.ui.notify(`WORKSPACE INITIALIZED: ${name} | ID: ${slug}`, "info");
-      } else {
-        ctx.ui.notify(
-          `WORKSPACE ALREADY INITIALIZED: ${readWorkspaceName()}`,
-          "info",
-        );
-      }
-      ctx.ui.setStatus("worrie-status", "[NORMAL]");
-    },
-  });
 
   // ── persona commands (single-letter) ──
   for (const [name, p] of Object.entries(PERSONAS)) {
@@ -1152,7 +1079,7 @@ export default function (pi: ExtensionAPI) {
       handler: async (args, ctx) => {
         if (!setupDone()) {
           ctx.ui.notify(
-            "Run /setup first to initialize the workspace.",
+            "Run /init first to initialize the workspace.",
             "warning",
           );
           return;
@@ -1207,7 +1134,7 @@ export default function (pi: ExtensionAPI) {
       }
       if (!existsSync(projPath)) {
         mkdirSync(dirname(projPath), { recursive: true });
-        writeFileSync(projPath, PROJECT_MEMORY_TEMPLATE);
+        writeFileSync(projPath, PROJECT_MEMORY_TEMPLATE());
       }
       const content = readFileSync(projPath, "utf8");
       const anchor = content.indexOf("\n## 1.");
@@ -1279,155 +1206,6 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── /m — unified memory command ──
-  pi.registerCommand("m", {
-    description: "Memory: list, resolve, config",
-    getArgumentCompletions: (prefix: string) => {
-      const text = prefix ?? "";
-      // (applyCompletion: beforePrefix + item.value, prefix = full arg text) then auto-submits.
-      // Completing a 2nd+ token wipes earlier tokens (/m list err -> /m err). Only
-      // single-token completions are safe.
-      if (text.includes(" ")) return null;
-      const current = text.split(/\s+/).pop() ?? "";
-
-      const filter = (
-        items: { value: string; label: string; description?: string }[],
-        tok: string,
-      ) => {
-        const f = items.filter((i) => i.value.startsWith(tok));
-        return f.length > 0 ? f : null;
-      };
-
-      return filter(
-        [
-          { value: "list", label: "list", description: "List memory entries" },
-          {
-            value: "resolve",
-            label: "resolve",
-            description: "Resolve entry by ID",
-          },
-          { value: "config", label: "config", description: "Show/set config" },
-        ],
-        current,
-      );
-    },
-    handler: async (args, ctx) => {
-      const parts = (args ?? "").trim().split(/\s+/);
-      const sub = parts[0];
-      const rest = parts.slice(1);
-
-      // /m list [type] [--flags]
-      if (sub === "list") {
-        const type = rest[0];
-        const flag = rest[1] ?? "--active";
-        if (!type || !MEMORY_TYPES[type]) {
-          buildCrossFileTable(ctx, flag);
-          return;
-        }
-        buildTable(ctx, type, flag);
-        return;
-      }
-
-      // /m resolve <id>
-      if (sub === "resolve") {
-        const id = (rest[0] ?? "").toUpperCase();
-        if (!id) {
-          ctx.ui.notify(
-            "Usage: /m resolve <ERR-XXX | SEC-XXX | REV-XXX | TEST-XXX>",
-            "warning",
-          );
-          return;
-        }
-        ctx.ui.setStatus("worrie-status", "[MEMORY] resolving...");
-        try {
-          resolveEntry(ctx, id);
-        } finally {
-          ctx.ui.setStatus("worrie-status", "[NORMAL]");
-        }
-        return;
-      }
-
-      // /m config [key] [value]
-      if (sub === "config") {
-        const key = rest[0];
-        const value = rest[1];
-        if (!key) {
-          showConfig(ctx);
-          return;
-        }
-        if (
-          key === "promptOnBlock" &&
-          (value === "true" || value === "false")
-        ) {
-          memoryConfig.promptOnBlock = value === "true";
-          pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-          ctx.ui.notify(
-            `promptOnBlock ${memoryConfig.promptOnBlock ? "ON" : "OFF"}`,
-            "info",
-          );
-          return;
-        }
-        if (key === "maxEntries" && /^\d+$/.test(value ?? "")) {
-          memoryConfig.maxEntries = parseInt(value!, 10);
-          pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-          ctx.ui.notify(
-            `Archive threshold set to ${memoryConfig.maxEntries}`,
-            "info",
-          );
-          return;
-        }
-        if (key === "reset") {
-          memoryConfig = { promptOnBlock: true, maxEntries: 10 };
-          pi.appendEntry("worrie-memory-config", { ...memoryConfig });
-          ctx.ui.notify("Memory config reset to defaults", "info");
-          return;
-        }
-        ctx.ui.notify(
-          "Usage: /m config [promptOnBlock|maxEntries|reset] [value]",
-          "warning",
-        );
-        return;
-      }
-
-      // /m <type> "message" logging was removed — the AI logs memory entries
-      // itself with its own tracking IDs (uveworkflow style).
-      ctx.ui.notify(
-        "Usage: /m list [type] [--active|--resolved|--all|--count] | /m resolve <ID> | /m config [key] [value]",
-        "warning",
-      );
-    },
-  });
-
-  // ── /ml — list memory entries (shorthand for /m list) ──
-  pi.registerCommand("ml", {
-    description: "View memory entries as table",
-    getArgumentCompletions: (prefix: string) => {
-      const text = prefix ?? "";
-      // on Enter, so only single-token completions are safe.
-      if (text.includes(" ")) return null;
-      const current = text.split(/\s+/).pop() ?? "";
-
-      const types = Object.entries(MEMORY_TYPES).map(([key, t]) => ({
-        value: key,
-        label: key,
-        description: `${t.title} -> .pi/${t.file}`,
-      }));
-
-      const f = types.filter((i) => i.value.startsWith(current));
-      return f.length > 0 ? f : null;
-    },
-    handler: (args, ctx) => {
-      const parts = (args ?? "").trim().split(/\s+/);
-      const type = parts[0];
-      const flag = parts[1] ?? "--active";
-      if (!MEMORY_TYPES[type]) {
-        buildCrossFileTable(ctx, flag);
-        return;
-      }
-      buildTable(ctx, type, flag);
-    },
-  });
-
   // ── /archive — archive overflow entries ──
   pi.registerCommand("archive", {
     description: "Archive overflow memory entries",
@@ -1495,7 +1273,7 @@ export default function (pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       if (!setupDone()) {
         ctx.ui.notify(
-          "Run /setup first to initialize the workspace.",
+          "Run /init first to initialize the workspace.",
           "warning",
         );
         return;
@@ -1508,7 +1286,7 @@ export default function (pi: ExtensionAPI) {
       let persist = false;
       if (existsSync(projMemory)) {
         const m = readFileSync(projMemory, "utf8").match(
-          /\*\*(?:Obsidian )?Vault Path\*\*: (.+)/,
+          /\*\*(?:Obsidian )?Vault(?: Path| Root)?\*\*: (.+)/,
         );
         if (m) {
           vault = m[1].trim();
@@ -1571,21 +1349,22 @@ export default function (pi: ExtensionAPI) {
 
       if (persist && existsSync(projMemory)) {
         const content = readFileSync(projMemory, "utf8");
-        const line = `- **Vault Path**: ${vault}`;
-        if (/^\s*- \*\*(?:Obsidian )?Vault Path\*\*: .+$/m.test(content)) {
+        const line = `- **Vault Root**: ${vault}`;
+        if (/^\s*- \*\*(?:Obsidian )?Vault(?: Path| Root)?\*\*: .+$/m.test(content)) {
           // replace existing placeholder/entry in place (uveworkflow template)
           writeFileSync(
             projMemory,
             content.replace(
-              /^(\s*- \*\*(?:Obsidian )?Vault Path\*\*: ).+$/m,
+              /^(\s*- \*\*(?:Obsidian )?Vault(?: Path| Root)?\*\*: ).+$/m,
               `$1${vault}`,
             ),
           );
         } else {
-          const anchor = content.indexOf("\n## 1.");
+          // new template roots live in §3 Important Details
+          const anchor = content.indexOf("\n## 3.");
           const next =
             anchor >= 0
-              ? content.slice(0, anchor) + `\n${line}\n` + content.slice(anchor)
+              ? content.slice(0, anchor) + `${line}\n` + content.slice(anchor)
               : content.replace(/\s*$/, "") + `\n${line}\n`;
           writeFileSync(projMemory, next);
         }
@@ -1617,13 +1396,11 @@ export default function (pi: ExtensionAPI) {
         const srcSkills = join(tmpDir, ".pi", "skills");
         const srcMemory = join(tmpDir, ".pi", "memory");
         const srcArchives = join(tmpDir, ".pi", "archives");
-        const srcWorkspace = join(tmpDir, ".pi", "workspace.json");
 
-        const destRules = join(PKG_ROOT, "templates", "rules");
-        const destSkills = join(PKG_ROOT, "templates", "skills");
+        const destRules = join(PKG_ROOT, "extensions", "embed", "rules");
+        const destSkills = join(PKG_ROOT, "extensions", "embed", "skills");
         const destMemory = join(PKG_ROOT, "templates", "memory");
         const destArchives = join(PKG_ROOT, "templates", "archives");
-        const destWorkspace = join(PKG_ROOT, "templates", "workspace.json");
 
         let updated = 0;
 
@@ -1685,9 +1462,16 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        // Copy workspace template
-        if (existsSync(srcWorkspace)) {
-          writeFileSync(destWorkspace, readFileSync(srcWorkspace));
+        // Refresh workspace rules to latest upstream + pi-worrie mapping
+        // (only file /update is allowed to rewrite in the workspace)
+        // project_memory.md + memory/archives are never touched here.
+        const instrUpstream = join(srcRules, "instructions.md");
+        const instrDst = join(CONFIG_DIR, "rules", "instructions.md");
+        if (existsSync(instrUpstream) && existsSync(instrDst)) {
+          writeFileSync(
+            instrDst,
+            buildWorkspaceInstructions(readFileSync(instrUpstream, "utf8")),
+          );
           updated++;
         }
 
@@ -1706,38 +1490,6 @@ export default function (pi: ExtensionAPI) {
         }
         ctx.ui.setStatus("worrie-status", "[NORMAL]");
       }
-    },
-  });
-
-  // ── /rules — choose rules source ──
-  pi.registerCommand("rules", {
-    description:
-      "Choose which rules to follow: default .pi rules, AGENTS.md, or CLAUDE.md",
-    handler: async (_args, ctx) => {
-      if (!setupDone()) {
-        ctx.ui.notify(
-          "Run /setup first to initialize the workspace.",
-          "warning",
-        );
-        return;
-      }
-      const opts = rulesOptions();
-      const picked = await ctx.ui.select(
-        "Which rules should this workspace follow?",
-        opts.map((o) => o.label),
-      );
-      if (!picked) return;
-      const chosen = opts.find((o) => o.label === picked);
-      if (!chosen) return;
-      writeRulesSource(chosen.source);
-      if (!applyRulesSource(chosen.source)) {
-        ctx.ui.notify(
-          `Could not apply rules for ${chosen.label}.`,
-          "warning",
-        );
-        return;
-      }
-      ctx.ui.notify(`Rules source set to ${chosen.label}.`, "info");
     },
   });
 

@@ -22,11 +22,11 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 ### Pi - Persona Skills
 
-> Single-letter persona commands match uveworkflow flags. Same flow, shorter names.
+> Single-letter persona commands match uveworkflow flags. Same flow, shorter names. Now managed by `agents.ts` with all sources under `extensions/embed/`.
 
 **First run:**
 
-- **`/setup`** — Initialize workspace. Creates `.pi/workspace.json`, memory files, archive files, rules files (`.clinerules` + `system_instructions.md` beside `project_memory.md`, uveworkflow layout), and the 7 `worrie-*` agent files in `.pi/agents/` (planner, coder, debugger, orchestrator, reviewer, secure, tester). Never overwrites existing files.
+- **`/init`** — Full workspace initialization. Creates `.pi/workspace.json`, `.pi/memory/`, `.pi/archives/`, `.pi/rules/` (`instructions.md` from the embedded uveworkflow rules + a pi-worrie command-mapping section, and `project_memory.md`), and the 7 `worrie-*` agent files in `.pi/agents/` (planner, coder, debugger, orchestrator, reviewer, secure, tester). Also writes one pointer block into your project `AGENTS.md` (existing content untouched) so pi natively knows to read `.pi/rules/instructions.md`. Never overwrites existing files. `/setup` is an alias for `/init`.
 
 **Personas:**
 
@@ -49,26 +49,23 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 **Memory:**
 
-| Command                                          | What it does                                   |
-| ------------------------------------------------ | ---------------------------------------------- |
-| `/context`                                        | Prompt → update project_memory.md              |
-| `/error`                                          | Prompt → log to error_memory.md                |
-| `/codebase`                                       | Prompt → update codebase_map.md                |
-| `/m list [type] [--active\|--resolved\|--all]`      | View entries as table                          |
-| `/m resolve <ERR-XXX \| SEC-XXX \| ...>`           | Resolve entry manually (AI-free)               |
-| `/ml [type] [--active\|--resolved\|--all]`          | Shorthand for `/m list`                        |
-| `/archive`                                        | Archive overflow (threshold: 10, configurable) |
-| `/m config [promptOnBlock\|maxEntries\|reset]`      | Toggle settings                                |
+Logging is fully AI-managed (uveworkflow style, no manual commands): the AI appends new findings FIRST (LIFO, `### [TYPE-XXX]`), then presents them — see the `FINDINGS GATE` section in the rules. On fix, resolved entries migrate to Section 2 SAME response; history is never deleted. `/d`, `/r`, `/s`, `/t` trigger this automatically.
 
-Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (implementation_memory.md), `sec` (security_memory.md), `rev` (review_memory.md), `test` (test_memory.md), `proj` (project_memory.md). Logging is AI-managed — the AI itself appends new entries with its own tracking IDs (uveworkflow style). Entries use LIFO ordering, `### [RESOLVED] Title (ERR-XXX)` migration, and history is never deleted.
+| Command    | What it does                                      |
+| ---------- | ------------------------------------------------- |
+| `/context` | Flag-triggered git scan → fills `project_memory.md` §1 (Recent Changes) |
+| `/error`   | Flag-triggered scan → updates `error_memory.md`   |
+| `/codebase`| Flag-triggered structure inspection → `codebase_map.md` |
+| `/archive` | Archive overflow (threshold: 10 per section) — maps to upstream `-archive` |
+
+Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (implementation_memory.md), `sec` (security_memory.md), `rev` (review_memory.md), `test` (test_memory.md), `proj` (project_memory.md).
 
 **Utilities:**
 
-- **`/init`** — Initialize workspace.json only (without creating memory/agent files).
-- **`/clean`** — Scans for junk files (`.bak`, `.tmp`, `.log`, empty files) and debug traces (console.*, debugger, TODO, FIXME). Shows the list, asks your approval, removes approved junk files only. Source files are never touched.
-- **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault path once, remembers it, always overwrites with the latest version. Run `/setup` first.
-- **`/update`** — Fetches latest templates from [uveworkflow](https://github.com/worriee/uveworkflow) repo and updates source files (rules, skills, templates). Preserves installed workspace memory files.
-- **`/rules`** — Choose which rules the main session follows: default `.pi` rules (the AI reads the generated `.pi/rules/.clinerules` + `system_instructions.md` via `AGENTS.override.md`; embedded slim rules fallback on old workspaces), or a project `AGENTS.md` / `CLAUDE.md` (only shown if present). Selecting AGENTS.md/CLAUDE.md removes the override file so the real file takes priority (pi natively loads `AGENTS.override.md` → `AGENTS.md` → `CLAUDE.md`, first match wins).
+- **`/clean`** — Scans for junk files (`.bak`, `.tmp`, `.log`, empty files) and debug traces (console.*, debugger, TODO, FIXME). Shows the list, asks your approval, removes approved junk files only. Source files are never touched. Maps to upstream `System Clean`.
+- **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault root once and writes it into the `Vault Root` placeholder in `project_memory.md` §3 (`Backup Root` is left for a future backup feature). Run `/init` first.
+- **`/update`** — Fetches latest `.pi/` from [uveworkflow](https://github.com/worriee/uveworkflow) and refreshes `extensions/embed/` rules+skills and `templates/` memory+archives, then regenerates your workspace's `.pi/rules/instructions.md`. Never touches `project_memory.md`, `.pi/memory/`, or `.pi/archives/`.
+- **`/setup`** — Alias for `/init`.
 
 ---
 
@@ -115,11 +112,13 @@ Setting persists across sessions (stored in `.pi/worrie-themed.json`) until turn
 pi install git:github.com/worriee/pi-worrie
 ```
 
-After installing: run `/setup`.
+After installing: run `/init`.
+
+Rules always read from `.pi/rules/instructions.md` in every workspace — the pointer block `/init` writes into your `AGENTS.md` tells pi to load it. There is no rules-source selection anymore; if a workspace has an old `AGENTS.override.md` from previous versions, delete it manually so the pointer wins (pi loads the override first).
 
 ## Requirements
 
-- Pi >= 0.74.0 (extension support)
+- Pi >= 1.2.0 (extension support)
 - pi-subagents package (for the `worrie-*` subagents)
 
 ## Credit
