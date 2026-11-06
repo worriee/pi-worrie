@@ -13,6 +13,9 @@ import {
 import { join, dirname, extname } from "path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "child_process";
+import {
+  getAgentDir,
+} from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ===================================================================
@@ -78,31 +81,6 @@ function nextTrackingId(content: string, prefix: string): string {
   return `${prefix}-${String(max + 1).padStart(3, "0")}`;
 }
 
-// ===================================================================
-// Rules bootstrap: AGENTS.md holds one pointer block, no source choice
-// ===================================================================
-
-const RULES_POINTER = `# Workspace Rules (pi-worrie)
-Read and follow \`.pi/rules/instructions.md\`.
-Memory: \`.pi/memory/\` · archives: \`.pi/archives/\` — findings logged first, then presented.`;
-
-function ensureAgentRulesBlock(): void {
-  try {
-    const p = join(CWD, "AGENTS.md");
-    const content = existsSync(p)
-      ? readFileSync(p, "utf8").replace(/\s+$/, "")
-      : "";
-    if (content.includes(RULES_POINTER)) return;
-    const credit = "<!-- c: worrie -->";
-    const idx = content.lastIndexOf(credit);
-    const block = idx >= 0
-      ? `${content.slice(0, idx).replace(/\s+$/, "")}\n\n${RULES_POINTER}\n\n${credit}\n`
-      : `${content}\n\n${RULES_POINTER}\n\n${credit}\n`;
-    writeFileSync(p, block);
-  } catch {
-    // read-only workspace — skip silently
-  }
-}
 
 // ===================================================================
 // Tool sets
@@ -273,7 +251,7 @@ let savedTools: string[] | null = null;
 let memoryConfig = { promptOnBlock: true, maxEntries: 10 };
 
 // ===================================================================
-// Agent file construction (written by /setup)
+// Agent file construction (installed globally from embed skills)
 // ===================================================================
 
 function extensionDir(): string {
@@ -287,26 +265,21 @@ function extensionDir(): string {
 
 const PKG_ROOT = join(extensionDir(), "..");
 
-// pi-worrie mapping section appended to generated workspace instructions.md
-// (embed keeps the pure upstream file; the workspace gets section + credit)
+// pi-worrie mapping section appended to the injected rules text
 const FLAG_MAP = `## pi-worrie Flag Mapping
+This full rule text is injected into every pi session by the pi-worrie extension.
+BAN writing rules as md files into the workspace — memory and archive files under
+\`.pi/\` are the only workspace artifacts of this workflow.
+
 Dash-flag rules in this file map to same-named slash commands in pi:
-- \`/init\` — \`-init\` plus the full \`-setup\` chain (workspace.json, memory, archives, rules, agents)
+- \`/init\` — \`-init\` plus the full \`-setup\` chain: creates \`workspace.json\` plus \`.pi/memory/\` + \`.pi/archives/\` only
 - \`/context\` / \`/error\` / \`/codebase\` — flag-triggered updates handled via prompts
 - \`/archive\` / \`/clean\` — per \`Archival\` / \`System Clean\`
-- \`/obsidian\` / \`/update\` — per \`OBSIDIAN SYNC\` / \`UPDATE FLAG\`; update refreshes embed/ rules+skills and the workspace rules file
+- \`/obsidian\` / \`/update\` — per \`OBSIDIAN SYNC\` / \`UPDATE FLAG\`; update refreshes the extension's internal rules+skills and regenerates the global worrie-* agents
 - \`/normal\` — exit persona mode, restore tools (pi extension equivalent)
 - Personas: \`/a /p /c /d /o /s /r /t\` — \`FINDINGS GATE\` applies, logs first
 - pi-extension helpers: \`/subagents\` \`/updater\` \`/worrie-themed\`
 - No memory list commands: the AI reads memory files directly per this file.`;
-
-// upstream instructions.md 1:1 + pi-worrie mapping, single credit at EOF
-function buildWorkspaceInstructions(upstream: string): string {
-  const base = upstream
-    .replace(/\s*<!-- c: worrie -->\s*$/, "")
-    .replace(/\s+$/, "");
-  return `${base}\n\n${FLAG_MAP}\n\n<!-- c: worrie -->\n`;
-}
 
 function loadWorkspaceRules(): string {
   try {
@@ -318,6 +291,14 @@ function loadWorkspaceRules(): string {
     return "";
   }
 }
+
+// rules injected into EVERY pi session (upstream text + pi-worrie mapping)
+const INJECTED_RULES = `${loadWorkspaceRules().replace(
+  /\s*<!-- c: worrie -->\s*$/,
+  "",
+).replace(/\s+$/, "")}\n\n${FLAG_MAP}`;
+
+const GLOBAL_AGENTS_DIR = join(getAgentDir(), "agents");
 
 const SUBAGENT_RULES_SECTIONS = [
   "System Boundaries",
@@ -496,6 +477,32 @@ function refreshRulesSection(filePath: string, rulesText: string): boolean {
   return true;
 }
 
+// Install/refresh the 7 worrie-* agents into the global pi agents dir
+// (~/.pi/agent/agents/) so delegation works in any project with zero
+// workspace writes. Used at extension load (missing only) and by /update.
+function installGlobalAgents(force = false): number {
+  const rulesText = buildSubagentRules(loadWorkspaceRules());
+  let installed = 0;
+  try {
+    mkdirSync(GLOBAL_AGENTS_DIR, { recursive: true });
+    for (const [file, spec] of Object.entries(AGENT_SPECS)) {
+      const target = join(GLOBAL_AGENTS_DIR, file);
+      const content = buildAgentFile(
+        spec as any,
+        rulesText,
+        file.replace(/\.md$/, ""),
+      );
+      if (force || !existsSync(target) || readFileSync(target, "utf8") !== content) {
+        writeFileSync(target, content);
+        installed++;
+      }
+    }
+  } catch {
+    // read-only global dir — personas without delegation still work
+  }
+  return installed;
+}
+
 // ===================================================================
 // Memory templates
 // ===================================================================
@@ -553,7 +560,7 @@ function logMemory(ctx: any, type: string, message: string): void {
   const file = memPath(type);
   if (!file || !existsSync(file)) {
     ctx.ui.notify(
-      `Memory file for "${type}" missing. Run /setup first.`,
+      `Memory file for "${type}" missing. Run /init first.`,
       "warning",
     );
     return;
@@ -601,174 +608,6 @@ function buildMemoryEntry(
     default:
       return `### [${id ?? "NOTE"}] ${title}\n\n- **Context**: ${msg}\n- **Logged At**: ${now}\n\n`;
   }
-}
-
-function resolveEntry(ctx: any, id: string): void {
-  const idUpper = id.toUpperCase();
-  let found = false;
-  for (const [type, t] of Object.entries(MEMORY_TYPES)) {
-    if (!t.prefix) continue;
-    const file = memPath(type);
-    if (!file || !existsSync(file)) continue;
-    const content = readFileSync(file, "utf8");
-    const lines = content.split("\n");
-    const start = lines.findIndex((l) => l.startsWith(`### [${idUpper}] `));
-    if (start === -1) continue;
-    const sec1End = lines.findIndex(
-      (l, i) => i > start && l.startsWith("## 2."),
-    );
-    if (sec1End === -1) continue;
-    let end = lines.findIndex((l, i) => i > start && /^#{3,4} \[/.test(l));
-    if (end === -1) end = sec1End;
-    const block = lines.slice(start, end);
-    const title = block[0].replace(`### [${idUpper}] `, "");
-    block[0] = `### [RESOLVED] ${title} (${idUpper})`;
-    let sec2 = lines.findIndex((l, i) => i > start && l.startsWith("## 2."));
-    if (sec2 === -1) sec2 = sec1End;
-    let ins = sec2 + 1;
-    while (
-      ins < lines.length &&
-      (lines[ins].trim() === "" ||
-        lines[ins].startsWith("_") ||
-        lines[ins].startsWith(">"))
-    )
-      ins++;
-    lines.splice(start, end - start);
-    lines.splice(ins, 0, ...block, "");
-    writeFileSync(file, lines.join("\n"));
-    ctx.ui.notify(`Resolved ${idUpper} → Section 2 (${t.file})`, "info");
-    found = true;
-    break;
-  }
-  if (!found)
-    ctx.ui.notify(`Entry ${idUpper} not found in active section.`, "warning");
-}
-
-function buildTable(ctx: any, type: string, flag: string): void {
-  const t = MEMORY_TYPES[type];
-  const file = memPath(type);
-  if (!file || !existsSync(file)) {
-    ctx.ui.notify(
-      `Memory file for "${type}" missing. Run /setup first.`,
-      "warning",
-    );
-    return;
-  }
-  const content = readFileSync(file, "utf8");
-  const raw = content
-    .split("\n###")
-    .slice(1)
-    .map((b) => "###" + b);
-  const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
-  const entries = blocks.filter((b) =>
-    /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b),
-  );
-  let list = entries;
-  if (flag === "--active")
-    list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
-  else if (flag === "--resolved")
-    list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
-  else if (flag === "--all") list = entries;
-  else if (flag === "--count") {
-    const active = entries.filter(
-      (b) => !b.startsWith("### [RESOLVED]"),
-    ).length;
-    const resolved = entries.filter((b) =>
-      b.startsWith("### [RESOLVED]"),
-    ).length;
-    ctx.ui.notify(
-      `${type}: open ${active}  resolved ${resolved}  total ${active + resolved}`,
-      "info",
-    );
-    return;
-  }
-  if (list.length === 0) {
-    ctx.ui.notify(`No entries for ${type}.`, "info");
-    return;
-  }
-  const rows = list.map((b) => {
-    const head = b.split("\n")[0];
-    const status = b.startsWith("### [RESOLVED]") ? "RESOLVED" : "OPEN";
-    const match = head.match(/^### \[([^\]]+)\] (.+)/);
-    const id = match ? `[${match[1]}]` : head.slice(0, 12).padEnd(12);
-    const title = match
-      ? match[2].slice(0, 40).padEnd(40)
-      : head.slice(12).padEnd(40);
-    return `| ${id} | ${title} | ${status} |`;
-  });
-  const header = `| ID | Title | Status |\n|----|-------|--------|`;
-  ctx.ui.notify(
-    `/m list ${type} (${list.length} entries)\n${header}\n${rows.join("\n")}`,
-    "info",
-  );
-}
-
-function buildCrossFileTable(ctx: any, flag: string): void {
-  const allEntries: Array<{
-    file: string;
-    id: string;
-    title: string;
-    status: string;
-  }> = [];
-  for (const [type, t] of Object.entries(MEMORY_TYPES)) {
-    if (!t.prefix) continue;
-    const file = memPath(type);
-    if (!file || !existsSync(file)) continue;
-    const content = readFileSync(file, "utf8");
-    const raw = content
-      .split("\n###")
-      .slice(1)
-      .map((b) => "###" + b);
-    const blocks = raw.filter((b) => /^#{3,4} \[/.test(b));
-    const entries = blocks.filter((b) =>
-      /^#{3,4} \[(RESOLVED\] |[A-Z]+(?:-[A-Z]+)*-\d+)\]/.test(b),
-    );
-    let list = entries;
-    if (flag === "--active")
-      list = entries.filter((b) => !b.startsWith("### [RESOLVED]"));
-    else if (flag === "--resolved")
-      list = entries.filter((b) => b.startsWith("### [RESOLVED]"));
-    else if (flag === "--count") {
-      const active = entries.filter(
-        (b) => !b.startsWith("### [RESOLVED]"),
-      ).length;
-      const resolved = entries.filter((b) =>
-        b.startsWith("### [RESOLVED]"),
-      ).length;
-      ctx.ui.notify(`${t.file}: open ${active}  resolved ${resolved}`, "info");
-      continue;
-    }
-    for (const b of list) {
-      const head = b.split("\n")[0];
-      const status = b.startsWith("### [RESOLVED]") ? "RESOLVED" : "OPEN";
-      const match = head.match(/^#{3,4} \[([^\]]+)\] (.+)/);
-      if (match) {
-        allEntries.push({
-          file: t.file,
-          id: `[${match[1]}]`,
-          title: match[2].slice(0, 35),
-          status,
-        });
-      }
-    }
-  }
-  if (allEntries.length === 0) {
-    ctx.ui.notify("No entries found.", "info");
-    return;
-  }
-  const rows = allEntries
-    .slice(0, 20)
-    .map(
-      (e) =>
-        `| ${e.file.padEnd(20)} | ${e.id.padEnd(10)} | ${e.title.padEnd(35)} | ${e.status} |`,
-    );
-  const header = `| File | ID | Title | Status |\n|------|----|-------|--------|`;
-  const extra =
-    allEntries.length > 20 ? `\n... and ${allEntries.length - 20} more` : "";
-  ctx.ui.notify(
-    `/m list (${flag}) ${allEntries.length} entries total${extra}\n${header}\n${rows.join("\n")}`,
-    "info",
-  );
 }
 
 function archiveMemory(ctx: any): void {
@@ -831,17 +670,6 @@ function archiveMemory(ctx: any): void {
   if (moved === 0)
     ctx.ui.notify("Nothing to archive - all sections within limit.", "info");
 }
-
-function showConfig(ctx: any): void {
-  ctx.ui.notify(
-    `[BLOCK] prompt ${memoryConfig.promptOnBlock ? "ON" : "OFF"}\n[ARCHIVE] threshold ${memoryConfig.maxEntries}`,
-    "info",
-  );
-}
-
-// ===================================================================
-// /clean scan
-// ===================================================================
 
 const DEBUG_PATTERNS = [
   /console\.(log|error|warn|debug|info)\(/,
@@ -947,6 +775,7 @@ export default function (pi: ExtensionAPI) {
     } catch {
       // ephemeral session
     }
+    installGlobalAgents();
     if (!setupDone()) {
       ctx.ui.setStatus("worrie-status", "[SETUP] not initialized");
     } else if (activePersona) {
@@ -959,14 +788,13 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── /init (+ /setup alias): full workspace initialization ──
+  // ── /init (+ /setup alias): workspace identity + memory/archives only ──
   const initCommand = {
     description:
-      "Initialize workspace: workspace.json, memory, archives, rules, agent files",
+      "Initialize workspace: workspace.json, memory/, archives/ (rules stay injected, agents stay global)",
     handler: async (_args: unknown, ctx: any) => {
       ctx.ui.setStatus("worrie-status", "[SETUP] initializing...");
       mkdirSync(MEMORY_DIR, { recursive: true });
-      mkdirSync(AGENTS_DIR, { recursive: true });
       mkdirSync(ARCHIVES_DIR, { recursive: true });
 
       if (!setupDone()) {
@@ -1008,9 +836,9 @@ export default function (pi: ExtensionAPI) {
           created++;
         }
       }
-      const projPath = join(CONFIG_DIR, "rules", "project_memory.md");
+
+      const projPath = join(CONFIG_DIR, "memory", "project_memory.md");
       if (!existsSync(projPath)) {
-        mkdirSync(dirname(projPath), { recursive: true });
         writeFileSync(
           projPath,
           readFileSync(
@@ -1018,19 +846,6 @@ export default function (pi: ExtensionAPI) {
             "utf8",
           ),
         );
-        created++;
-      }
-
-      // generate rules beside project_memory.md (uveworkflow naming). Never
-      // overwrites: /update is the refresh path for instructions.md content.
-      const instrSrc = readFileSync(
-        join(PKG_ROOT, "extensions", "embed", "rules", "instructions.md"),
-        "utf8",
-      );
-      const instrDst = join(CONFIG_DIR, "rules", "instructions.md");
-      if (!existsSync(instrDst)) {
-        mkdirSync(dirname(instrDst), { recursive: true });
-        writeFileSync(instrDst, buildWorkspaceInstructions(instrSrc));
         created++;
       }
 
@@ -1042,26 +857,13 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      const rulesText = buildSubagentRules(loadWorkspaceRules());
-      let agents = 0;
-      for (const [file, spec] of Object.entries(AGENT_SPECS)) {
-        const agentPath = join(AGENTS_DIR, file);
-        if (!existsSync(agentPath)) {
-          writeFileSync(
-            agentPath,
-            buildAgentFile(spec as any, rulesText, file.replace(/\.md$/, "")),
-          );
-          agents++;
-        } else if (rulesText && refreshRulesSection(agentPath, rulesText)) {
-          agents++;
-        }
-      }
-
-      ensureAgentRulesBlock();
+      // persona agents install globally (~/.pi/agent/agents) — nothing in the
+      // workspace except workspace.json + memory + archives
+      const installed = installGlobalAgents();
 
       ctx.ui.setStatus("worrie-status", "[NORMAL]");
       ctx.ui.notify(
-        `Initialization complete. ${agents} agent(s), ${created} memory/archive/rule file(s). Commands: /a /p /c /d /o /s /r /t /normal /context /error /codebase /clean /archive /obsidian /update`,
+        `Initialization complete. workspace.json + ${created} memory/archive file(s). Commands: /a /p /c /d /o /s /r /t /normal /context /error /codebase /clean /archive /obsidian /update`,
         "info",
       );
     },
@@ -1122,7 +924,7 @@ export default function (pi: ExtensionAPI) {
     description: "Analyze and update project_memory.md with current workflow",
     handler: async (_args, ctx) => {
       ctx.ui.setStatus("worrie-status", "[MEMORY] updating context...");
-      const projPath = join(CONFIG_DIR, "rules", "project_memory.md");
+      const projPath = join(CONFIG_DIR, "memory", "project_memory.md");
       const msg = await ctx.ui.input(
         "Describe current project state, milestones, or pending items:",
         "",
@@ -1160,7 +962,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("worrie-status", "[MEMORY] logging error...");
       const file = memPath("err");
       if (!existsSync(file)) {
-        ctx.ui.notify("error_memory.md missing. Run /setup first.", "warning");
+        ctx.ui.notify("error_memory.md missing. Run /init first.", "warning");
         ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
@@ -1185,7 +987,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("worrie-status", "[MEMORY] mapping codebase...");
       const file = memPath("code");
       if (!existsSync(file)) {
-        ctx.ui.notify("codebase_map.md missing. Run /setup first.", "warning");
+        ctx.ui.notify("codebase_map.md missing. Run /init first.", "warning");
         ctx.ui.setStatus("worrie-status", "[NORMAL]");
         return;
       }
@@ -1281,7 +1083,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("worrie-status", "[OBSIDIAN] syncing...");
       let projectName = readWorkspaceName();
 
-      const projMemory = join(CONFIG_DIR, "rules", "project_memory.md");
+      const projMemory = join(CONFIG_DIR, "memory", "project_memory.md");
       let vault = "";
       let persist = false;
       if (existsSync(projMemory)) {
@@ -1316,7 +1118,7 @@ export default function (pi: ExtensionAPI) {
         [WORKSPACE_FILE, "workspace.json"],
       ];
       if (existsSync(projMemory))
-        jobs.push([projMemory, join("rules", "project_memory.md")]);
+        jobs.push([projMemory, join("memory", "project_memory.md")]);
       for (const file of Object.keys(MEMORY_TEMPLATES)) {
         const p = join(MEMORY_DIR, file);
         if (existsSync(p)) jobs.push([p, join("memory", file)]);
@@ -1462,18 +1264,9 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        // Refresh workspace rules to latest upstream + pi-worrie mapping
-        // (only file /update is allowed to rewrite in the workspace)
-        // project_memory.md + memory/archives are never touched here.
-        const instrUpstream = join(srcRules, "instructions.md");
-        const instrDst = join(CONFIG_DIR, "rules", "instructions.md");
-        if (existsSync(instrUpstream) && existsSync(instrDst)) {
-          writeFileSync(
-            instrDst,
-            buildWorkspaceInstructions(readFileSync(instrUpstream, "utf8")),
-          );
-          updated++;
-        }
+        // Regenerate the global worrie-* agents from refreshed embed sources
+        // so delegation in any project picks up the new rules+skills.
+        updated += installGlobalAgents(true);
 
         ctx.ui.notify(
           `Update complete. ${updated} file(s) updated from uveworkflow.`,
@@ -1511,12 +1304,18 @@ export default function (pi: ExtensionAPI) {
 
   // ── persona prompt injection ──
   pi.on("before_agent_start", async (event, ctx) => {
+    // always inject rules (upstream + flag map); persona prompt rides on top
     if (activePersona) {
       return {
         systemPrompt:
-          event.systemPrompt + "\n\n" + PERSONAS[activePersona].prompt,
+          event.systemPrompt +
+          "\n\n" +
+          INJECTED_RULES +
+          "\n\n" +
+          PERSONAS[activePersona].prompt,
       };
     }
+    return { systemPrompt: event.systemPrompt + "\n\n" + INJECTED_RULES };
   });
 
   // ── turn end: restore after delegation ──

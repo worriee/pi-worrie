@@ -26,7 +26,11 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 
 **First run:**
 
-- **`/init`** — Full workspace initialization. Creates `.pi/workspace.json`, `.pi/memory/`, `.pi/archives/`, `.pi/rules/` (`instructions.md` from the embedded uveworkflow rules + a pi-worrie command-mapping section, and `project_memory.md`), and the 7 `worrie-*` agent files in `.pi/agents/` (planner, coder, debugger, orchestrator, reviewer, secure, tester). Also writes one pointer block into your project `AGENTS.md` (existing content untouched) so pi natively knows to read `.pi/rules/instructions.md`. Never overwrites existing files. `/setup` is an alias for `/init`.
+- **`/init`** — Creates the workspace identity only: `.pi/workspace.json` + `.pi/memory/` (7 files incl. `project_memory.md`) + `.pi/archives/` (5 files). NEVER writes rules or agent files into your project. `/setup` is an alias.
+
+**How rules reach the AI (no workspace `AGENTS.md` or `.pi/rules/` files):**
+
+`agents.ts` injects the full embedded rules (uveworkflow `instructions.md` + `pi-worrie Flag Mapping`) into EVERY pi session's system prompt, always. Persona agents (`worrie-*`) are installed **globally** to `~/.pi/agent/agents/` when the extension loads and are refreshed by `/update` — so delegation works in any project with zero workspace writes. Cost: the rules ride along in every session (~15-20K tokens).
 
 **Personas:**
 
@@ -36,6 +40,7 @@ Run updates inside pi directly without needing the terminal. Updates extensions 
 | `/p <task>`      | Read-only planning, waits for approval                                                                                                               | main session                 |
 | `/c <task>`      | Implementation                                                                                                                                       | worrie-coder subagent        |
 | `/d <problem>`   | Bug fixing, root-cause analysis                                                                                                                      | worrie-debugger subagent     |
+
 | `/o <prompt>`    | Auto-detects the right persona from your prompt                                                                                                      | worrie-orchestrator subagent |
 | `/o auto <task>` | Full 11-stage pipeline: PLAN -> CODE -> TEST -> DEBUG -> SECURE -> DEBUG -> TEST -> CLEAN -> REVIEW -> DOCUMENT -> ASK (approval before every stage) | worrie-orchestrator subagent |
 | `/r <target>`    | Code review (read-only on source)                                                                                                                    | worrie-reviewer subagent     |
@@ -63,8 +68,8 @@ Memory types: `err` (error_memory.md), `code` (codebase_map.md), `impl` (impleme
 **Utilities:**
 
 - **`/clean`** — Scans for junk files (`.bak`, `.tmp`, `.log`, empty files) and debug traces (console.*, debugger, TODO, FIXME). Shows the list, asks your approval, removes approved junk files only. Source files are never touched. Maps to upstream `System Clean`.
-- **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json, agent files, AGENTS.md) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault root once and writes it into the `Vault Root` placeholder in `project_memory.md` §3 (`Backup Root` is left for a future backup feature). Run `/init` first.
-- **`/update`** — Fetches latest `.pi/` from [uveworkflow](https://github.com/worriee/uveworkflow) and refreshes `extensions/embed/` rules+skills and `templates/` memory+archives, then regenerates your workspace's `.pi/rules/instructions.md`. Never touches `project_memory.md`, `.pi/memory/`, or `.pi/archives/`.
+- **`/obsidian`** — Mirrors your workspace (memory logs, archives, project_memory, workspace.json) into `<vault>/<project_name>/` in your Obsidian vault. Asks for the vault root once and writes it into the `Vault Root` placeholder in `project_memory.md` §3 (`Backup Root` is left for a future backup feature). Run `/init` first.
+- **`/update`** — Fetches the latest `.pi/` from [uveworkflow](https://github.com/worriee/uveworkflow), refreshes the extension's internal `embed/` rules+skills and `templates/` memory+archives, and regenerates the global `worrie-*` agent files. Zero workspace writes.
 - **`/setup`** — Alias for `/init`.
 
 ---
@@ -114,7 +119,7 @@ pi install git:github.com/worriee/pi-worrie
 
 After installing: run `/init`.
 
-Rules always read from `.pi/rules/instructions.md` in every workspace — the pointer block `/init` writes into your `AGENTS.md` tells pi to load it. There is no rules-source selection anymore; if a workspace has an old `AGENTS.override.md` from previous versions, delete it manually so the pointer wins (pi loads the override first).
+Rules live inside the extension and are injected into every session — nothing about the workflow is generated into your project except `workspace.json`, `.pi/memory/` and `.pi/archives/`. Old workspaces may still carry a stale `AGENTS.override.md` or pointer blocks from previous versions; delete those manually.
 
 ## Requirements
 
